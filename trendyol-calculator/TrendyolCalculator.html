@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calculator Profit Trendyol</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+
+    .app { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+    header { text-align: center; margin-bottom: 24px; }
+    header h1 { font-size: 24px; color: #f97316; margin-bottom: 16px; }
+
+    .tabs { display: flex; justify-content: center; gap: 8px; }
+    .tab {
+      padding: 10px 28px; border: 1px solid #333; background: #16213e;
+      color: #aaa; cursor: pointer; border-radius: 6px 6px 0 0;
+      font-size: 14px; transition: all 0.2s;
+    }
+    .tab:hover { background: #1a2a4a; color: #ddd; }
+    .tab.active { background: #0f3460; color: #f97316; border-color: #f97316; border-bottom-color: transparent; }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .calculator-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 768px) { .calculator-layout { grid-template-columns: 1fr; } }
+
+    .input-panel, .result-panel {
+      background: #16213e; border-radius: 10px; padding: 24px; border: 1px solid #1e3a5f;
+    }
+    .input-panel h2, .result-panel h2 {
+      color: #f97316; font-size: 18px; margin-bottom: 16px;
+      padding-bottom: 8px; border-bottom: 1px solid #1e3a5f;
+    }
+
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 13px; color: #999; margin-bottom: 4px; }
+
+    .form-group select, .form-group input[type="number"], .form-group input[type="text"] {
+      width: 100%; padding: 9px 12px; background: #0f3460; border: 1px solid #1e3a5f;
+      border-radius: 6px; color: #e0e0e0; font-size: 14px; outline: none; transition: border-color 0.2s;
+    }
+    .form-group select:focus, .form-group input:focus { border-color: #f97316; }
+    .form-group input[readonly] { background: #0d2847; color: #f97316; font-weight: 600; }
+
+    .checkbox-label {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 14px; color: #ccc; cursor: pointer;
+    }
+    .checkbox-label input[type="checkbox"] { accent-color: #f97316; width: 16px; height: 16px; }
+
+    .hint { font-size: 11px; color: #777; margin-top: 4px; }
+    hr { border: none; border-top: 1px solid #1e3a5f; margin: 16px 0; }
+
+    .btn-calculate {
+      width: 100%; padding: 12px; background: #f97316; color: #fff; border: none;
+      border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: background 0.2s; margin-top: 8px;
+    }
+    .btn-calculate:hover { background: #ea580c; }
+
+    .result-empty {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 300px; color: #555; font-size: 15px;
+    }
+    .result-card { animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    .result-row {
+      display: flex; justify-content: space-between; padding: 10px 0;
+      border-bottom: 1px solid #1e3a5f; font-size: 14px;
+    }
+    .result-row:last-child { border-bottom: none; }
+    .result-row .label { color: #999; }
+    .result-row .value { color: #e0e0e0; font-weight: 500; }
+
+    .result-row.highlight {
+      background: #0f3460; margin: 0 -12px; padding: 12px; border-radius: 6px;
+      border-bottom: none; margin-top: 8px;
+    }
+    .result-row.highlight .label { color: #f97316; font-weight: 600; font-size: 15px; }
+    .result-row.highlight .value { color: #f97316; font-weight: 700; font-size: 17px; }
+
+    .result-section-title {
+      font-size: 13px; color: #f97316; text-transform: uppercase;
+      letter-spacing: 1px; margin-top: 16px; margin-bottom: 4px;
+    }
+
+    .btn-save-result {
+      width: 100%; padding: 10px; background: #16a34a; color: #fff; border: none;
+      border-radius: 6px; font-size: 14px; cursor: pointer; margin-top: 16px; transition: background 0.2s;
+    }
+    .btn-save-result:hover { background: #15803d; }
+    .btn-save-result:disabled { background: #555; cursor: default; }
+
+    .history-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .history-header h2 { color: #f97316; font-size: 18px; }
+
+    .btn-clear-history {
+      padding: 8px 16px; background: #dc2626; color: #fff; border: none;
+      border-radius: 6px; font-size: 13px; cursor: pointer; transition: background 0.2s;
+    }
+    .btn-clear-history:hover { background: #b91c1c; }
+
+    .history-list { display: flex; flex-direction: column; gap: 12px; }
+    .history-empty { text-align: center; color: #555; padding: 40px; font-size: 15px; }
+
+    .history-item {
+      background: #16213e; border: 1px solid #1e3a5f; border-radius: 8px; padding: 16px; position: relative;
+    }
+    .history-item-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .history-item-date { font-size: 12px; color: #777; }
+    .history-item-name { font-size: 14px; color: #e0e0e0; font-weight: 600; flex: 1; }
+    .history-item-market { font-size: 12px; padding: 2px 10px; border-radius: 10px; font-weight: 600; }
+
+    .market-RO { background: #1e3a5f; color: #60a5fa; }
+    .market-BG { background: #1a3a1a; color: #4ade80; }
+    .market-GR { background: #3a2a1a; color: #fbbf24; }
+
+    .history-item-body { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 13px; }
+    .history-item-body .hi-label { color: #777; }
+    .history-item-body .hi-value { color: #ddd; font-weight: 500; }
+    .history-item-body .hi-highlight { color: #f97316; font-weight: 700; }
+
+    .history-item-actions {
+      display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end;
+    }
+    .btn-reload-history {
+      background: none; border: 1px solid #f97316; color: #f97316;
+      padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.2s;
+    }
+    .btn-reload-history:hover { background: #f97316; color: #fff; }
+    .btn-delete-history {
+      background: none; border: 1px solid #555;
+      color: #888; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.2s;
+    }
+    .btn-delete-history:hover { border-color: #dc2626; color: #dc2626; }
+
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #1a1a2e; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #555; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Calculator Profit Trendyol</h1>
+      <div class="tabs">
+        <button class="tab active" data-tab="calculator">Calculator</button>
+        <button class="tab" data-tab="history">Istoric</button>
+      </div>
+    </header>
+
+    <div class="tab-content active" id="calculator">
+      <div class="calculator-layout">
+        <div class="input-panel">
+          <h2>Date Produs</h2>
+
+          <div class="form-group">
+            <label for="market">Piata</label>
+            <select id="market">
+              <option value="RO">Romania (RO)</option>
+              <option value="BG">Bulgaria (BG)</option>
+              <option value="GR">Grecia (GR)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="sellerType">Tip Vanzator</label>
+            <select id="sellerType">
+              <option value="standard">Standard</option>
+              <option value="newcomer">New Comer</option>
+              <option value="crossBorder">Cross-Border</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="mainGroup">Categorie Principala</label>
+            <select id="mainGroup"><option value="">-- Selecteaza --</option></select>
+          </div>
+
+          <div class="form-group" id="categoryGroupWrapper">
+            <label for="categoryGroup">Subcategorie</label>
+            <select id="categoryGroup"><option value="">-- Selecteaza categoria principala --</option></select>
+          </div>
+
+          <div class="form-group" id="brandToggleGroup" style="display:none;">
+            <label class="checkbox-label">
+              <input type="checkbox" id="useBrandCommission">
+              Comision specific brand
+            </label>
+            <p class="hint" id="brandHint"></p>
+          </div>
+
+          <div class="form-group" id="customCommissionGroup" style="display:none;">
+            <label for="customCommission">Comision Personalizat (%)</label>
+            <input type="number" id="customCommission" step="0.1" min="0" max="100" placeholder="ex. 14">
+          </div>
+
+          <div class="form-group">
+            <label for="commissionDisplay">Procent Comision</label>
+            <input type="text" id="commissionDisplay" readonly>
+          </div>
+
+          <div class="form-group">
+            <label for="productCost">Cost Produs (RON, fara TVA)</label>
+            <input type="number" id="productCost" step="0.01" min="0" placeholder="ex. 25.00">
+          </div>
+
+          <div class="form-group">
+            <label for="weight">Greutate Produs (kg)</label>
+            <input type="number" id="weight" step="0.1" min="0.1" value="1" placeholder="ex. 1.5">
+          </div>
+
+          <div class="form-group">
+            <label for="shippingDisplay">Cost Transport (RON)</label>
+            <input type="text" id="shippingDisplay" readonly>
+          </div>
+
+          <hr>
+
+          <div class="form-group">
+            <label for="calcMode">Mod Calcul</label>
+            <select id="calcMode">
+              <option value="profitToPrice">Profit Dorit -> Pret Client</option>
+              <option value="priceToProfit">Pret Client -> Profit</option>
+            </select>
+          </div>
+
+          <div class="form-group" id="desiredProfitGroup">
+            <label for="desiredProfit">Profit Dorit (RON)</label>
+            <input type="number" id="desiredProfit" step="0.01" min="0" placeholder="ex. 15.00">
+            <p class="hint">Profitul final dupa toate costurile, inclusiv campanie.</p>
+          </div>
+
+          <div class="form-group" id="finalPriceInputGroup" style="display:none;">
+            <label for="finalPriceInput">Pret Client (RON)</label>
+            <input type="number" id="finalPriceInput" step="0.01" min="0" placeholder="ex. 90.00">
+            <p class="hint">Pretul pe care il plateste clientul (pret vazut de client).</p>
+          </div>
+
+          <hr>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="useCampaign">
+              Reducere Campanie
+            </label>
+          </div>
+
+          <div class="form-group" id="campaignGroup" style="display:none;">
+            <label for="campaignDiscount">Reducere Campanie (%)</label>
+            <input type="number" id="campaignDiscount" step="1" min="1" max="99" value="10" placeholder="ex. 10">
+            <label for="trendyolCoverPct">Trendyol Acopera (%)</label>
+            <input type="number" id="trendyolCoverPct" step="1" min="0" max="100" value="20" placeholder="ex. 20">
+            <p class="hint">Procentul din reducere acoperit de Trendyol (implicit 20%).</p>
+          </div>
+
+          <button class="btn-calculate" id="btnCalculate">Calculeaza</button>
+        </div>
+
+        <div class="result-panel">
+          <h2>Rezultat</h2>
+          <div id="resultContent" class="result-empty">
+            <p>Completeaza datele si apasa Calculeaza</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-content" id="history">
+      <div class="history-header">
+        <h2>Istoric Calcule</h2>
+        <button class="btn-clear-history" id="btnClearHistory">Sterge Tot Istoricul</button>
+      </div>
+      <div id="historyList" class="history-list">
+        <p class="history-empty">Niciun calcul salvat.</p>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ============================================================
+// DATE
+// ============================================================
+const commissions = [
+  {"mainGroup":"Accesorii","group":"Genti & Accesorii","commission":0.19,"newcomer":0.16,"crossBorder":0.16,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Accesorii","group":"Lingouri & Monede de Aur","commission":0.04,"newcomer":0.035,"crossBorder":0.035,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Accesorii","group":"Ochelari de Soare","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Accesorii","group":"Ceasuri, Seturi Ceasuri, Curele Ceas","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Incaltaminte","group":"Incaltaminte","commission":0.19,"newcomer":0.16,"crossBorder":0.16,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Imbracaminte","group":"Imbracaminte","commission":0.19,"newcomer":0.16,"crossBorder":0.16,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Cosmetice & Ingrijire Personala","group":"Ingrijire Orala, Piele, Machiaj, Par","commission":0.13,"newcomer":0.11,"crossBorder":0.09,"brandName":"NIVEA, Gillette, L'Oreal Paris, Colgate, Catrice, Garnier, Maybelline, Essence, Syoss, Pampers, Oral-B, Bioderma, ELMIPLANT, Durex, Royal Canin, Domestos, Vileda, Huggies, La Roche Posay, NYX, Nestle, Hipp, CeraVe, RIMMEL LONDON, Sensodyne, Seni, Hygienium, Prima, Frosch, Johnson's","brandCommission":0.11,"brandNewcomer":0.09},
+  {"mainGroup":"Cosmetice & Ingrijire Personala","group":"Parfumuri, Esente, Seturi Parfum, Colonie","commission":0.12,"newcomer":0.1,"crossBorder":0.08,"brandName":"NIVEA, Gillette, L'Oreal Paris, Colgate, Catrice, Garnier, Maybelline, Essence, Syoss, Pampers, Oral-B, Bioderma, ELMIPLANT, Durex, Royal Canin, Domestos, Vileda, Huggies, La Roche Posay, NYX, Nestle, Hipp, CeraVe, RIMMEL LONDON, Sensodyne, Seni, Hygienium, Prima, Frosch, Johnson's","brandCommission":0.1,"brandNewcomer":0.08},
+  {"mainGroup":"Supermarket","group":"Ingrijire Mama & Copil, Cosmetice Bebelusi, Alimentatie, Igiena","commission":0.13,"newcomer":0.11,"crossBorder":0.09,"brandName":"NIVEA, Gillette, L'Oreal Paris, Colgate, Catrice, Garnier, Maybelline, Essence, Syoss, Pampers, Oral-B, Bioderma, ELMIPLANT, Durex, Royal Canin, Domestos, Vileda, Huggies, La Roche Posay, NYX, Nestle, Hipp, CeraVe, RIMMEL LONDON, Sensodyne, Seni, Hygienium, Prima, Frosch, Johnson's","brandCommission":0.11,"brandNewcomer":0.09},
+  {"mainGroup":"Supermarket","group":"Scutece Bebelusi","commission":0.1,"newcomer":0.08,"crossBorder":0.07,"brandName":"NIVEA, Gillette, L'Oreal Paris, Colgate, Catrice, Garnier, Maybelline, Essence, Syoss, Pampers, Oral-B, Bioderma, ELMIPLANT, Durex, Royal Canin, Domestos, Vileda, Huggies, La Roche Posay, NYX, Nestle, Hipp, CeraVe, RIMMEL LONDON, Sensodyne, Seni, Hygienium, Prima, Frosch, Johnson's","brandCommission":0.08,"brandNewcomer":0.07},
+  {"mainGroup":"Supermarket","group":"Ingrijire Casa & Curatenie","commission":0.14,"newcomer":0.12,"crossBorder":0.1,"brandName":"NIVEA, Gillette, L'Oreal Paris, Colgate, Catrice, Garnier, Maybelline, Essence, Syoss, Pampers, Oral-B, Bioderma, ELMIPLANT, Durex, Royal Canin, Domestos, Vileda, Huggies, La Roche Posay, NYX, Nestle, Hipp, CeraVe, RIMMEL LONDON, Sensodyne, Seni, Hygienium, Prima, Frosch, Johnson's","brandCommission":0.12,"brandNewcomer":0.1},
+  {"mainGroup":"Supermarket","group":"Sanatate","commission":0.14,"newcomer":0.12,"crossBorder":0.1,"brandName":"NIVEA, Gillette, L'Oreal Paris, Colgate, Catrice, Garnier, Maybelline, Essence, Syoss, Pampers, Oral-B, Bioderma, ELMIPLANT, Durex, Royal Canin, Domestos, Vileda, Huggies, La Roche Posay, NYX, Nestle, Hipp, CeraVe, RIMMEL LONDON, Sensodyne, Seni, Hygienium, Prima, Frosch, Johnson's","brandCommission":0.12,"brandNewcomer":0.1},
+  {"mainGroup":"Supermarket","group":"Alimente & Bauturi","commission":0.14,"newcomer":0.12,"crossBorder":0.1,"brandName":"NIVEA, Gillette, L'Oreal Paris, Colgate, Catrice, Garnier, Maybelline, Essence, Syoss, Pampers, Oral-B, Bioderma, ELMIPLANT, Durex, Royal Canin, Domestos, Vileda, Huggies, La Roche Posay, NYX, Nestle, Hipp, CeraVe, RIMMEL LONDON, Sensodyne, Seni, Hygienium, Prima, Frosch, Johnson's","brandCommission":0.12,"brandNewcomer":0.1},
+  {"mainGroup":"Supermarket","group":"Bauturi Alcoolice","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Supermarket","group":"Hrana Animale","commission":0.11,"newcomer":0.09,"crossBorder":0.08,"brandName":"NIVEA, Gillette, L'Oreal Paris, Colgate, Catrice, Garnier, Maybelline, Essence, Syoss, Pampers, Oral-B, Bioderma, ELMIPLANT, Durex, Royal Canin, Domestos, Vileda, Huggies, La Roche Posay, NYX, Nestle, Hipp, CeraVe, RIMMEL LONDON, Sensodyne, Seni, Hygienium, Prima, Frosch, Johnson's","brandCommission":0.09,"brandNewcomer":0.08},
+  {"mainGroup":"Supermarket","group":"Alte Produse Petshop","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Mama & Copil","group":"Iluminat","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Mama & Copil","group":"Produse Mama & Copil, Cadouri, Accesorii Copii","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Mama & Copil","group":"Carucioare, Echipamente Bebelusi","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Mama & Copil","group":"Jucarii","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Gradina & Unelte","group":"Utilaje Agricole, Gradinarit, Unelte Electrice, Sisteme Energie","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Gradina & Unelte","group":"Flori & Plante, Produse Piscina, Accesorii Gratar, Echipamente Semineu","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Gradina & Unelte","group":"Decoratiuni Gradina, Unelte Mici, Gratar, Semineu","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Baie & Constructii","group":"Materiale Constructii Baie, Incalzitoare, Radiatoare, Pardoseala","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Baie & Constructii","group":"Feronerie, Usi Interior, Unelte Mobilier","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Baie & Constructii","group":"Unelte Manuale","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Baie & Constructii","group":"Vopsea, Materiale Instalatii Electrice","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Baie & Constructii","group":"Incaltaminte de Lucru, Echipamente Protectie, Imbracaminte de Lucru","commission":0.19,"newcomer":0.16,"crossBorder":0.16,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Casa & Mobilier","group":"Baie, Textile Casa, Vesela & Bucatarie","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Casa & Mobilier","group":"Mobilier Greu","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Casa & Mobilier","group":"Decoratiuni Casa","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Casa & Mobilier","group":"Articole Menaj","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Casa & Mobilier","group":"Mobilier Usor","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Casa & Mobilier","group":"Iluminat, Covoare, Perdele","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Hobby & Divertisment","group":"Drona","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Hobby & Divertisment","group":"Instrumente Muzicale si Echipamente","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Hobby & Divertisment","group":"Vehicule Telecomandate, Cadouri, Hobby, Filme, Seturi Jocuri","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Hobby & Divertisment","group":"Tutun & Accesorii Tutun","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Hobby & Divertisment","group":"Articole Petrecere, Accesorii Drona","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Papetarie & Birou","group":"Papetarie & Rechizite Birou","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Carti","group":"Carti","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Auto & Moto","group":"Sisteme Audio Auto, Accesorii Exterioare, Piese de Schimb","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Auto & Moto","group":"Baterii Auto si Accesorii","commission":0.11,"newcomer":0.09,"crossBorder":0.09,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Auto & Moto","group":"Motociclete, Scutere Electrice, Echipamente Incarcare EV","commission":0.11,"newcomer":0.09,"crossBorder":0.09,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Auto & Moto","group":"GPS & Navigatie","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Auto & Moto","group":"Accesorii Interior Auto, Securitate Vehicul","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Auto & Moto","group":"Accesorii Moto, Imbracaminte Moto, Echipamente Protectie","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Auto & Moto","group":"Piese Schimb Moto, Jante","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Auto & Moto","group":"Anvelope Auto & Moto","commission":0.09,"newcomer":0.08,"crossBorder":0.08,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Auto & Moto","group":"Produse Iarna, Ingrijire Auto, Compresor, Capace Roti, Brelocuri","commission":0.19,"newcomer":0.16,"crossBorder":0.16,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Aripioare Inot","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Bicicleta","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Biciclete & Accesorii, Trotinete Electrice, Patine & Skateboard","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Echipamente Barca & Iaht","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Motor Barca","commission":0.09,"newcomer":0.08,"crossBorder":0.08,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Echipamente Sportive","commission":0.19,"newcomer":0.16,"crossBorder":0.16,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Accesorii Camping","commission":0.19,"newcomer":0.16,"crossBorder":0.16,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Drumetie","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Echipamente Camping","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Aparate Fitness","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Truse Prim Ajutor","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Produse Pescuit","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Fitness & Conditie Fizica","commission":0.19,"newcomer":0.16,"crossBorder":0.16,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Echipamente Echitatie","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Bete Ski, Legaturi Snowboard","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Accesorii Sportive","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Echipamente Inot, Scufundari","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Sport & Outdoor","group":"Cort","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Stilou 3D","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Imprimante 3D, Piese Calculator","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Echipamente Retea, Accesorii TV & Audio","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Aer Conditionat","commission":0.08,"newcomer":0.07,"crossBorder":0.07,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Cortina Aer, Aeroterma, Racitor Portabil, Ventilator","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"PC-uri All-in-One, Desktop, Gaming Desktop","commission":0.09,"newcomer":0.08,"crossBorder":0.08,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Camere Foto (Analog, Mirrorless, DSLR, Compact, Video)","commission":0.07,"newcomer":0.06,"crossBorder":0.06,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Telefoane Mobile & Smartphone-uri","commission":0.07,"newcomer":0.06,"crossBorder":0.06,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Imprimante & Scanere","commission":0.11,"newcomer":0.09,"crossBorder":0.09,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Cabluri, Adaptoare, Tastaturi, Mouse, Webcam, Boxe","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Accesorii Curatenie & Ingrijire","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Aparate Curatenie, Purificatoare Aer, Umidificatoare","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Jocuri PC & Consola","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Tablete","commission":0.07,"newcomer":0.06,"crossBorder":0.06,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Gamepad-uri, Joystick-uri & Accesorii Consola","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Convector, Calorifer Ulei, Centrala, Boiler Electric","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Hard Disk-uri Externe & SSD-uri","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Aparate Preparare Alimente & Bauturi","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Accesorii Aparate Preparare Alimente","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Periferice Gaming, Carduri Memorie, USB, Consumabile Imprimanta","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Pompa Caldura, Incalzitoare & Accesorii","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Laptopuri & Laptopuri Gaming","commission":0.07,"newcomer":0.06,"crossBorder":0.06,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Playere Media, DVD, Home Theater, Sisteme Audio","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Accesorii Monitor & Laptop, Securitate Smart, Supraveghere","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Monitoare & Monitoare Gaming","commission":0.08,"newcomer":0.07,"crossBorder":0.07,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Componente PC (Placa de Baza, RAM, GPU, CPU, PSU, SSD)","commission":0.1,"newcomer":0.08,"crossBorder":0.08,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Console Jocuri (PlayStation, Xbox, Nintendo)","commission":0.07,"newcomer":0.06,"crossBorder":0.06,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Piese Schimb Ingrijire Personala","commission":0.15,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Accesorii Telefon, Baterii Externe, Huse Tableta","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Accesorii Foto & Camera, Obiective","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Jocuri Consola Second Hand","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Proiectoare, Soundbar, Boxe Bluetooth, Microfoane","commission":0.11,"newcomer":0.09,"crossBorder":0.09,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Laptopuri Reconditionate","commission":0.1,"newcomer":0.08,"crossBorder":0.08,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Tablete Reconditionate","commission":0.08,"newcomer":0.07,"crossBorder":0.07,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Smartphone-uri Reconditionate","commission":0.08,"newcomer":0.07,"crossBorder":0.07,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Bratari Smart, Ceasuri Copii, Casti","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Aparate Smart Casa","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Iluminat Smart","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Cantar Smart, Epilator, Placa Par, Trimmer, Uscator, Aparat Ras","commission":0.13,"newcomer":0.11,"crossBorder":0.11,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Smartwatch-uri, Casti VR","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Televizoare, Aspirator Robot","commission":0.07,"newcomer":0.06,"crossBorder":0.06,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Accesorii TV, Echipamente Satelit","commission":0.16,"newcomer":0.13,"crossBorder":0.13,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Pachete Garantie & Service, Componente PC","commission":0.14,"newcomer":0.12,"crossBorder":0.12,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Electrocasnice Mari","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Piese Schimb Electrocasnice","commission":0.17,"newcomer":0.14,"crossBorder":0.14,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Telefoane Fixe & Wireless","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Huse, Folii Protectie, Incarcatoare, Cabluri Audio","commission":0.19,"newcomer":0.16,"crossBorder":0.16,"brandName":null,"brandCommission":null,"brandNewcomer":null},
+  {"mainGroup":"Electronice","group":"Tableta Desen Copii","commission":0.12,"newcomer":0.1,"crossBorder":0.1,"brandName":null,"brandCommission":null,"brandNewcomer":null}
+];
+
+const shipping = {
+  RO: {
+    courier: "FAN Courier",
+    threshold: 40,
+    rates: [
+      [1,11.48],[2,11.48],[3,11.48],[4,12.41],[5,13.34],[6,14.27],[7,15.19],[8,17.00],
+      [9,18.54],[10,19.88],[11,19.88],[12,19.88],[13,22.66],[14,22.66],[15,22.66],
+      [16,32.45],[17,32.45],[18,32.45],[19,32.45],[20,32.45],[21,34.51],[22,34.51],
+      [23,34.51],[24,34.51],[25,34.51],[26,38.63],[27,38.63],[28,38.63],[29,38.63],
+      [30,38.63],[31,44.81],[32,44.81],[33,44.81],[34,44.81],[35,44.81],[36,51.00],
+      [37,51.00],[38,51.00],[39,51.00],[40,51.00]
+    ],
+    overweightPerKg: 1.0
+  },
+  BG: {
+    courier: "DPD Romania",
+    threshold: 50,
+    rates: [
+      [1,13.03],[2,13.03],[3,13.03],[4,15.86],[5,17.25],[6,18.69],[7,20.09],[8,21.53],
+      [9,22.92],[10,27.30],[11,27.30],[12,27.30],[13,31.42],[14,31.42],[15,31.42],
+      [16,38.63],[17,38.63],[18,38.63],[19,38.63],[20,38.63],[21,45.84],[22,45.84],
+      [23,45.84],[24,45.84],[25,45.84],[26,53.05],[27,53.05],[28,53.05],[29,53.05],
+      [30,53.05],[31,58.05]
+    ],
+    overweightPerKg: 5.0
+  },
+  GR: {
+    courier: "DPD Romania",
+    threshold: 50,
+    rates: [
+      [1,17.09],[2,17.09],[3,17.09],[4,19.84],[5,22.59],[6,27.54],[7,31.37],[8,35.24],
+      [9,38.56],[10,41.87],[11,54.52],[12,57.27],[13,60.03],[14,62.78],[15,65.54],
+      [16,78.54],[17,78.54],[18,78.54],[19,78.54],[20,78.54],[21,92.31],[22,92.31],
+      [23,92.31],[24,92.31],[25,92.31],[26,106.08],[27,106.08],[28,106.08],[29,106.08],
+      [30,106.08],[31,111.08]
+    ],
+    overweightPerKg: 5.0
+  }
+};
+
+// ============================================================
+// REFERINTE DOM
+// ============================================================
+const $$ = id => document.getElementById(id);
+const $market = $$('market');
+const $sellerType = $$('sellerType');
+const $mainGroup = $$('mainGroup');
+const $categoryGroup = $$('categoryGroup');
+const $brandToggleGroup = $$('brandToggleGroup');
+const $useBrandCommission = $$('useBrandCommission');
+const $brandHint = $$('brandHint');
+const $commissionDisplay = $$('commissionDisplay');
+const $productCost = $$('productCost');
+const $weight = $$('weight');
+const $shippingDisplay = $$('shippingDisplay');
+const $calcMode = $$('calcMode');
+const $desiredProfitGroup = $$('desiredProfitGroup');
+const $desiredProfit = $$('desiredProfit');
+const $finalPriceInputGroup = $$('finalPriceInputGroup');
+const $finalPriceInput = $$('finalPriceInput');
+const $useCampaign = $$('useCampaign');
+const $campaignGroup = $$('campaignGroup');
+const $campaignDiscount = $$('campaignDiscount');
+const $btnCalculate = $$('btnCalculate');
+const $resultContent = $$('resultContent');
+const $btnClearHistory = $$('btnClearHistory');
+const $historyList = $$('historyList');
+
+// ============================================================
+// ISTORIC (localStorage)
+// ============================================================
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem('trendyol_history') || '[]'); }
+  catch { return []; }
+}
+function saveHistoryData(data) {
+  localStorage.setItem('trendyol_history', JSON.stringify(data));
+}
+
+// ============================================================
+// DROPDOWN-URI
+// ============================================================
+function populateMainGroups() {
+  const groups = [...new Set(commissions.map(c => c.mainGroup))];
+  $mainGroup.innerHTML = '<option value="">-- Selecteaza --</option>';
+  groups.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g; opt.textContent = g;
+    $mainGroup.appendChild(opt);
+  });
+  // Optiune personalizata
+  const customOpt = document.createElement('option');
+  customOpt.value = '__custom__'; customOpt.textContent = 'Personalizat (comision manual)';
+  $mainGroup.appendChild(customOpt);
+}
+
+function populateCategoryGroups(mainGroup) {
+  const items = commissions.filter(c => c.mainGroup === mainGroup);
+  $categoryGroup.innerHTML = '<option value="">-- Selecteaza --</option>';
+  items.forEach(item => {
+    const opt = document.createElement('option');
+    opt.value = item.group; opt.textContent = item.group;
+    $categoryGroup.appendChild(opt);
+  });
+}
+
+// ============================================================
+// GETTERS
+// ============================================================
+function getSelectedCategory() {
+  return commissions.find(c => c.mainGroup === $mainGroup.value && c.group === $categoryGroup.value);
+}
+
+function getCommissionRate() {
+  if ($mainGroup.value === '__custom__') {
+    const val = parseFloat($$('customCommission').value);
+    return !isNaN(val) ? val / 100 : null;
+  }
+  const cat = getSelectedCategory();
+  if (!cat) return null;
+  const st = $sellerType.value;
+  const useBrand = $useBrandCommission.checked && cat.brandCommission != null;
+  if (useBrand) {
+    if (st === 'newcomer' && cat.brandNewcomer != null) return cat.brandNewcomer;
+    return cat.brandCommission;
+  }
+  if (st === 'newcomer') return cat.newcomer;
+  if (st === 'crossBorder') return cat.crossBorder;
+  return cat.commission;
+}
+
+// Transport: daca pretul final < prag (40 RO, 50 BG/GR) => 8 RON flat
+// Altfel: dupa greutate din tabel
+function getShippingCostByWeight(market) {
+  const weight = parseFloat($weight.value);
+  if (isNaN(weight) || weight <= 0) return null;
+  const md = shipping[market];
+  if (!md) return null;
+  const idx = Math.min(Math.ceil(weight), md.rates.length) - 1;
+  if (idx >= 0 && idx < md.rates.length) return md.rates[idx][1];
+  const last = md.rates[md.rates.length - 1];
+  const extra = Math.ceil(weight - last[0]);
+  return last[1] + extra * md.overweightPerKg;
+}
+
+function getShippingCost(market, finalPrice) {
+  const md = shipping[market];
+  if (!md) return null;
+  // Sub pragul de pret => 8 RON flat
+  if (finalPrice !== null && finalPrice < md.threshold) {
+    return 8;
+  }
+  return getShippingCostByWeight(market);
+}
+
+// ============================================================
+// ACTUALIZARE AFISAJ
+// ============================================================
+function updateCommissionDisplay() {
+  const rate = getCommissionRate();
+  $commissionDisplay.value = rate != null ? (rate * 100).toFixed(1) + '%' : '';
+}
+
+function updateShippingDisplay() {
+  // Afisam transportul dupa greutate (se recalculeaza la calcul final)
+  const cost = getShippingCostByWeight($market.value);
+  const market = $market.value;
+  const courier = shipping[market]?.courier || '';
+  const threshold = shipping[market]?.threshold || 0;
+  $shippingDisplay.value = cost != null
+    ? cost.toFixed(2) + ' RON (' + courier + ') | sub ' + threshold + ' RON = 8 RON'
+    : '';
+}
+
+function updateBrandToggle() {
+  const cat = getSelectedCategory();
+  if (cat && cat.brandCommission != null) {
+    $brandToggleGroup.style.display = 'block';
+    $brandHint.textContent = 'Branduri: ' + cat.brandName;
+  } else {
+    $brandToggleGroup.style.display = 'none';
+    $useBrandCommission.checked = false;
+  }
+}
+
+// ============================================================
+// EVENIMENTE
+// ============================================================
+$mainGroup.addEventListener('change', () => {
+  const isCustom = $mainGroup.value === '__custom__';
+  $$('categoryGroupWrapper').style.display = isCustom ? 'none' : 'block';
+  $$('customCommissionGroup').style.display = isCustom ? 'block' : 'none';
+  if (!isCustom) populateCategoryGroups($mainGroup.value);
+  updateBrandToggle(); updateCommissionDisplay();
+});
+$$('customCommission').addEventListener('input', updateCommissionDisplay);
+$categoryGroup.addEventListener('change', () => { updateBrandToggle(); updateCommissionDisplay(); });
+$sellerType.addEventListener('change', updateCommissionDisplay);
+$useBrandCommission.addEventListener('change', updateCommissionDisplay);
+$market.addEventListener('change', updateShippingDisplay);
+$weight.addEventListener('input', updateShippingDisplay);
+
+$calcMode.addEventListener('change', () => {
+  const isPtoP = $calcMode.value === 'profitToPrice';
+  $desiredProfitGroup.style.display = isPtoP ? 'block' : 'none';
+  $finalPriceInputGroup.style.display = isPtoP ? 'none' : 'block';
+});
+
+$useCampaign.addEventListener('change', () => {
+  $campaignGroup.style.display = $useCampaign.checked ? 'block' : 'none';
+});
+
+// ============================================================
+// CALCUL
+// ============================================================
+function calculate() {
+  const commissionRate = getCommissionRate();
+  const productCost = parseFloat($productCost.value);
+  const market = $market.value;
+  const weight = parseFloat($weight.value);
+
+  if (commissionRate == null || isNaN(productCost) || isNaN(weight)) {
+    $resultContent.innerHTML = '<p style="color:#dc2626;">Completeaza toate campurile obligatorii.</p>';
+    $resultContent.className = 'result-empty';
+    return;
+  }
+
+  // Taxa suplimentara BG/GR
+  let extraTax = 0;
+  if (market === 'BG') extraTax = 0.20;
+  if (market === 'GR') extraTax = 0.24;
+
+  const totalDeduction = commissionRate + extraTax;
+  const vatCost = productCost * 1.21;
+
+  // Parametri campanie
+  const hasCampaign = $useCampaign.checked;
+  let discountPct = 0;
+  let trendyolCoverRate = 0.20;
+  if (hasCampaign) {
+    discountPct = parseFloat($campaignDiscount.value) / 100 || 0;
+    trendyolCoverRate = parseFloat($$('trendyolCoverPct').value) / 100 || 0.20;
+  }
+
+  // Raport intre Pret Supus Comisionului si Pret Original Campanie:
+  // PSC = PretOriginal * (1 - discountPct * (1 - trendyolCoverRate))
+  // PretClient = PretOriginal * (1 - discountPct)
+  // Fara campanie: PSC = PretClient (sunt egale)
+  const pscFactor = hasCampaign && discountPct > 0
+    ? (1 - discountPct * (1 - trendyolCoverRate))
+    : 1;
+  const clientFactor = hasCampaign && discountPct > 0
+    ? (1 - discountPct)
+    : 1;
+
+  // Formula profit:
+  // Profit = (1 - totalDeduction) * PSC - vatCost - shipping
+  // PSC = PretOriginal * pscFactor
+  // => Profit = (1 - totalDeduction) * PretOriginal * pscFactor - vatCost - shipping
+  // => PretOriginal = (Profit + vatCost + shipping) / ((1 - totalDeduction) * pscFactor)
+
+  let pretOriginal, pretClient, psc, profit, shippingCost;
+
+  if ($calcMode.value === 'profitToPrice') {
+    profit = parseFloat($desiredProfit.value);
+    if (isNaN(profit)) {
+      $resultContent.innerHTML = '<p style="color:#dc2626;">Introdu profitul dorit.</p>';
+      $resultContent.className = 'result-empty';
+      return;
+    }
+
+    const divisor = (1 - totalDeduction) * pscFactor;
+    if (divisor <= 0) {
+      $resultContent.innerHTML = '<p style="color:#dc2626;">Comisionul + taxa depasesc 100%. Calcul imposibil.</p>';
+      $resultContent.className = 'result-empty';
+      return;
+    }
+
+    const weightShipping = getShippingCostByWeight(market);
+    const threshold = shipping[market]?.threshold || 40;
+
+    // Calcul cu transport pe greutate
+    let poWeight = (profit + vatCost + weightShipping) / divisor;
+    let pcWeight = poWeight * clientFactor;
+    // Calcul cu transport flat 8 RON
+    let poFlat = (profit + vatCost + 8) / divisor;
+    let pcFlat = poFlat * clientFactor;
+
+    // Determinam care varianta se aplica (pragul se aplica pe Pret Client)
+    if (pcFlat < threshold) {
+      pretOriginal = poFlat;
+      shippingCost = 8;
+    } else {
+      pretOriginal = poWeight;
+      shippingCost = weightShipping;
+    }
+
+    pretClient = pretOriginal * clientFactor;
+    psc = pretOriginal * pscFactor;
+
+  } else {
+    // In modul "Pret -> Profit", userul introduce Pret Client
+    pretClient = parseFloat($finalPriceInput.value);
+    if (isNaN(pretClient)) {
+      $resultContent.innerHTML = '<p style="color:#dc2626;">Introdu pretul client.</p>';
+      $resultContent.className = 'result-empty';
+      return;
+    }
+
+    // PretClient = PretOriginal * clientFactor
+    pretOriginal = hasCampaign && discountPct > 0 ? pretClient / clientFactor : pretClient;
+    psc = pretOriginal * pscFactor;
+    shippingCost = getShippingCost(market, pretClient);
+    profit = (1 - totalDeduction) * psc - vatCost - shippingCost;
+  }
+
+  const commissionAmount = commissionRate * psc;
+  const extraTaxAmount = extraTax * psc;
+  const profitMargin = pretClient > 0 ? (profit / pretClient * 100) : 0;
+
+  // Detalii campanie
+  let campaignHtml = '';
+  let campaignData = null;
+  if (hasCampaign && discountPct > 0) {
+    const totalDiscount = pretOriginal - pretClient;
+    const trendyolCovers = totalDiscount * trendyolCoverRate;
+    const sellerCovers = totalDiscount - trendyolCovers;
+
+    campaignData = {
+      discountPct: (discountPct * 100).toFixed(0),
+      pretOriginal: pretOriginal.toFixed(2),
+      pretClient: pretClient.toFixed(2),
+      psc: psc.toFixed(2),
+      totalDiscount: totalDiscount.toFixed(2),
+      trendyolCovers: trendyolCovers.toFixed(2),
+      sellerCovers: sellerCovers.toFixed(2),
+      trendyolCoverPct: (trendyolCoverRate * 100).toFixed(0)
+    };
+
+    campaignHtml = `
+      <div class="result-section-title">Detalii Campanie</div>
+      <div class="result-row highlight">
+        <span class="label">Pret Original Campanie</span>
+        <span class="value">${campaignData.pretOriginal} RON</span>
+      </div>
+      <div class="result-row highlight">
+        <span class="label">Pret Client (dupa reducere ${campaignData.discountPct}%)</span>
+        <span class="value">${campaignData.pretClient} RON</span>
+      </div>
+      <div class="result-row">
+        <span class="label">Pret Supus Comisionului</span>
+        <span class="value">${campaignData.psc} RON</span>
+      </div>
+      <div class="result-row">
+        <span class="label">Reducere Totala</span>
+        <span class="value">${campaignData.totalDiscount} RON</span>
+      </div>
+      <div class="result-row">
+        <span class="label">Trendyol Acopera (${campaignData.trendyolCoverPct}%)</span>
+        <span class="value">${campaignData.trendyolCovers} RON</span>
+      </div>
+      <div class="result-row">
+        <span class="label">Vanzator Acopera (${(100 - trendyolCoverRate * 100).toFixed(0)}%)</span>
+        <span class="value">${campaignData.sellerCovers} RON</span>
+      </div>
+    `;
+  }
+
+  // Fara campanie: pretClient = psc = pretOriginal (sunt egale)
+  const displayPrice = hasCampaign && discountPct > 0 ? pretClient : pretOriginal;
+
+  $resultContent.className = 'result-card';
+  $resultContent.innerHTML = `
+    <div class="result-section-title">Pret & Profit</div>
+    ${hasCampaign && discountPct > 0 ? '' : `
+    <div class="result-row highlight">
+      <span class="label">${$calcMode.value === 'profitToPrice' ? 'Pret Client Necesar' : 'Profit Calculat'}</span>
+      <span class="value">${$calcMode.value === 'profitToPrice' ? displayPrice.toFixed(2) + ' RON' : profit.toFixed(2) + ' RON'}</span>
+    </div>`}
+    <div class="result-row highlight">
+      <span class="label">Profit Final</span>
+      <span class="value">${profit.toFixed(2)} RON</span>
+    </div>
+
+    ${campaignHtml}
+
+    <div class="result-section-title">Defalcare Costuri</div>
+    <div class="result-row">
+      <span class="label">Cost Produs (fara TVA)</span>
+      <span class="value">${productCost.toFixed(2)} RON</span>
+    </div>
+    <div class="result-row">
+      <span class="label">Cost Produs + TVA (21%)</span>
+      <span class="value">${vatCost.toFixed(2)} RON</span>
+    </div>
+    <div class="result-row">
+      <span class="label">Pret Supus Comisionului</span>
+      <span class="value">${psc.toFixed(2)} RON</span>
+    </div>
+    <div class="result-row">
+      <span class="label">Comision (${(commissionRate * 100).toFixed(1)}% din PSC)</span>
+      <span class="value">${commissionAmount.toFixed(2)} RON</span>
+    </div>
+    ${extraTax > 0 ? `
+    <div class="result-row">
+      <span class="label">Taxa ${market} (${(extraTax * 100).toFixed(0)}% din PSC)</span>
+      <span class="value">${extraTaxAmount.toFixed(2)} RON</span>
+    </div>` : ''}
+    <div class="result-row">
+      <span class="label">Transport (${shipping[market]?.courier}, ${weight} kg${shippingCost === 8 ? ' - sub prag' : ''})</span>
+      <span class="value">${shippingCost.toFixed(2)} RON</span>
+    </div>
+    <div class="result-row">
+      <span class="label">Marja Profit</span>
+      <span class="value">${profitMargin.toFixed(1)}%</span>
+    </div>
+    <button class="btn-save-result" id="btnSaveResult">Salveaza in Istoric</button>
+  `;
+
+  $$('btnSaveResult').addEventListener('click', function() {
+    const name = prompt('Nume produs (pentru istoric):');
+    if (name === null) return;
+    this.disabled = true;
+    this.textContent = 'Salvat!';
+    const history = loadHistory();
+    history.unshift({
+      id: Date.now().toString(),
+      name: name || 'Fara nume',
+      date: new Date().toLocaleString('ro-RO'),
+      market, sellerType: $sellerType.value,
+      mainGroup: $mainGroup.value,
+      categoryGroup: $categoryGroup.value,
+      category: $mainGroup.value === '__custom__' ? 'Personalizat (' + (commissionRate * 100).toFixed(1) + '%)' : $mainGroup.value + ' > ' + $categoryGroup.value,
+      commissionRate: (commissionRate * 100).toFixed(1) + '%',
+      commissionRateNum: commissionRate,
+      useBrand: $useBrandCommission.checked,
+      productCost: productCost.toFixed(2),
+      vatCost: vatCost.toFixed(2),
+      weight, shippingCost: shippingCost.toFixed(2),
+      pretClient: pretClient.toFixed(2),
+      pretOriginal: pretOriginal.toFixed(2),
+      psc: psc.toFixed(2),
+      finalPrice: pretClient.toFixed(2),
+      profit: profit.toFixed(2),
+      profitMargin: profitMargin.toFixed(1) + '%',
+      campaign: campaignData
+    });
+    saveHistoryData(history);
+  });
+}
+
+$btnCalculate.addEventListener('click', calculate);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && document.activeElement.tagName !== 'BUTTON') calculate();
+});
+
+// ============================================================
+// TAB-URI
+// ============================================================
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    $$(tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'history') renderHistory();
+  });
+});
+
+// ============================================================
+// ISTORIC
+// ============================================================
+function renderHistory() {
+  const history = loadHistory();
+  if (history.length === 0) {
+    $historyList.innerHTML = '<p class="history-empty">Niciun calcul salvat.</p>';
+    return;
+  }
+  $historyList.innerHTML = history.map(item => `
+    <div class="history-item" data-id="${item.id}">
+      <div class="history-item-header">
+        <span class="history-item-name">${item.name || 'Fara nume'}</span>
+        <span class="history-item-market market-${item.market}">${item.market}</span>
+        <span class="history-item-date">${item.date}</span>
+      </div>
+      <div class="history-item-body">
+        <div><span class="hi-label">Categorie</span></div>
+        <div><span class="hi-value">${item.category}</span></div>
+        <div></div>
+        <div><span class="hi-label">Cost Produs</span><br><span class="hi-value">${item.productCost} RON</span></div>
+        <div><span class="hi-label">Pret Client</span><br><span class="hi-highlight">${item.pretClient || item.finalPrice} RON</span></div>
+        <div><span class="hi-label">Profit</span><br><span class="hi-highlight">${item.profit} RON</span></div>
+        <div><span class="hi-label">Comision</span><br><span class="hi-value">${item.commissionRate}</span></div>
+        <div><span class="hi-label">Transport</span><br><span class="hi-value">${item.shippingCost} RON</span></div>
+        <div><span class="hi-label">Marja</span><br><span class="hi-value">${item.profitMargin}</span></div>
+        ${item.campaign ? `
+          <div><span class="hi-label">Pret Original Campanie</span><br><span class="hi-value">${item.campaign.pretOriginal || item.campaign.listedPrice} RON</span></div>
+          <div><span class="hi-label">PSC</span><br><span class="hi-value">${item.campaign.psc || '-'} RON</span></div>
+          <div><span class="hi-label">Reducere</span><br><span class="hi-value">${item.campaign.discountPct}%</span></div>
+        ` : ''}
+      </div>
+      <div class="history-item-actions">
+        <button class="btn-reload-history" onclick="reloadFromHistory('${item.id}')">Incarca in Calculator</button>
+        <button class="btn-delete-history" onclick="deleteHistoryItem('${item.id}')">Sterge</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function reloadFromHistory(id) {
+  const history = loadHistory();
+  const item = history.find(h => h.id === id);
+  if (!item) return;
+
+  // Trecem pe tab-ul Calculator
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector('[data-tab="calculator"]').classList.add('active');
+  $$('calculator').classList.add('active');
+
+  // Setam valorile
+  $market.value = item.market;
+  $sellerType.value = item.sellerType || 'standard';
+
+  if (item.mainGroup === '__custom__') {
+    $mainGroup.value = '__custom__';
+    $$('categoryGroupWrapper').style.display = 'none';
+    $$('customCommissionGroup').style.display = 'block';
+    $$('customCommission').value = item.commissionRateNum ? (item.commissionRateNum * 100).toFixed(1) : '';
+  } else {
+    $mainGroup.value = item.mainGroup || '';
+    $$('categoryGroupWrapper').style.display = 'block';
+    $$('customCommissionGroup').style.display = 'none';
+    if (item.mainGroup) {
+      populateCategoryGroups(item.mainGroup);
+      $categoryGroup.value = item.categoryGroup || '';
+    }
+  }
+
+  if (item.useBrand) $useBrandCommission.checked = true;
+
+  $productCost.value = item.productCost;
+  $weight.value = item.weight;
+
+  // Campanie
+  if (item.campaign) {
+    $useCampaign.checked = true;
+    $campaignGroup.style.display = 'block';
+    $campaignDiscount.value = item.campaign.discountPct;
+    $$('trendyolCoverPct').value = item.campaign.trendyolCoverPct || 20;
+  } else {
+    $useCampaign.checked = false;
+    $campaignGroup.style.display = 'none';
+  }
+
+  updateBrandToggle();
+  updateCommissionDisplay();
+  updateShippingDisplay();
+
+  // Setam profitul si calculam
+  $calcMode.value = 'profitToPrice';
+  $desiredProfitGroup.style.display = 'block';
+  $finalPriceInputGroup.style.display = 'none';
+  $desiredProfit.value = item.profit;
+  calculate();
+}
+
+function deleteHistoryItem(id) {
+  let history = loadHistory();
+  history = history.filter(h => h.id !== id);
+  saveHistoryData(history);
+  renderHistory();
+}
+
+$btnClearHistory.addEventListener('click', () => {
+  if (confirm('Esti sigur ca vrei sa stergi tot istoricul?')) {
+    saveHistoryData([]);
+    renderHistory();
+  }
+});
+
+// ============================================================
+// INITIALIZARE
+// ============================================================
+populateMainGroups();
+updateShippingDisplay();
+</script>
+</body>
+</html>
