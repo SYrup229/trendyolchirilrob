@@ -694,13 +694,13 @@ function calculate() {
 
     // Calcul cu transport pe greutate
     let poWeight = (profit + vatCost + weightShipping) / divisor;
-    let pcWeight = poWeight * clientFactor;
+    let pscWeight = poWeight * pscFactor;
     // Calcul cu transport flat 8 RON
     let poFlat = (profit + vatCost + 8) / divisor;
-    let pcFlat = poFlat * clientFactor;
+    let pscFlat = poFlat * pscFactor;
 
-    // Determinam care varianta se aplica (pragul se aplica pe Pret Client)
-    if (pcFlat < threshold) {
+    // Determinam care varianta se aplica (pragul se aplica pe Pret Supus Comisionului)
+    if (pscFlat < threshold) {
       pretOriginal = poFlat;
       shippingCost = 8;
     } else {
@@ -723,7 +723,7 @@ function calculate() {
     // PretClient = PretOriginal * clientFactor
     pretOriginal = hasCampaign && discountPct > 0 ? pretClient / clientFactor : pretClient;
     psc = pretOriginal * pscFactor;
-    shippingCost = getShippingCost(market, pretClient);
+    shippingCost = getShippingCost(market, psc);
     profit = (1 - totalDeduction) * psc - vatCost - shippingCost;
   }
 
