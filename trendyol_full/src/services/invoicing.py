@@ -1,0 +1,707 @@
+import json
+import traceback
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from src.api.oblio import OblioClient
+from src.domain.order_status import INVOICEABLE_TRENDYOL_STATUSES, InvoiceState
+from src.logging_setup import get_app_logger
+from src.services.sync import build_oblio_client
+from src.storage.repo import Repo
+
+
+# Backwards-compat re-export — older callers and tests imported this constant.
+INVOICEABLE_STATUSES = INVOICEABLE_TRENDYOL_STATUSES
+
+
+@dataclass
+class InvoicePreviewLine:
+    listing_title: str
+    barcode: str | None
+    mapped_oblio_name: str | None
+    mapped_oblio_code: str | None
+    quantity: int
+    list_unit_price_gross: float       # what the listing was priced at before discount
+    discount_per_unit: float            # discount applied per unit
+    unit_price_gross: float             # what the customer paid per unit (= list - discount)
+    vat_percent: float
+    line_total_gross: float             # qty * unit_price_gross
+    is_mapped: bool
+    reason: str | None = None
+
+
+@dataclass
+class InvoicePreview:
+    order_id: int
+    order_number: str
+    order_status: str | None
+    buyer_name: str
+    buyer_email: str | None
+    ship_address: str | None
+    ship_city: str | None
+    ship_country: str | None
+    currency: str
+    lines: list[InvoicePreviewLine]
+    shipping_amount: float              # 0 if Trendyol bundles shipping into line prices
+    total_gross: float                  # sum of line totals + shipping; what customer paid
+    all_mapped: bool
+
+
+def build_preview(repo: Repo, order_id: int) -> InvoicePreview:
+    order = repo.get_order(order_id)
+    if not order:
+        raise ValueError(f"Order {order_id} not found")
+    raw = json.loads(order["raw_json"])
+    default_vat = repo.default_vat()
+
+    lines: list[InvoicePreviewLine] = []
+    total_gross = 0.0
+    all_mapped = True
+    currency = order.get("currency") or raw.get("currencyCode") or repo.invoice_currency()
+
+    for item in _order_lines(raw):
+        # Trendyol order lines: `sku` holds the actual GTIN/barcode; `productCode` is the
+        # numeric listing ID (== our product_main_id); `stockCode` / `merchantSku` are often
+        # the literal placeholder "merchantSku" and must NOT be treated as a real stock code.
+        barcode = item.get("sku") or item.get("barcode")
+        stock_code = item.get("stockCode") or item.get("merchantSku")
+        product_main_id = item.get("productCode") or item.get("contentId") or item.get("productMainId")
+        order_qty = max(int(item.get("quantity") or 1), 1)
+        title = item.get("productName") or item.get("title") or "(untitled)"
+
+        # Trendyol's pricing fields per line:
+        #   price            — per-unit gross (post-discount), when present
+        #   amount           — line total gross (post-discount), pre-VAT split
+        #   lineGrossAmount  — same as amount in current API responses
+        #   discount         — line-level discount amount (total, not per-unit)
+        # Trendyol-funded portion (totalTyDiscount / tyDiscount) is NOT subtracted from
+        # the customer-facing price; it's a post-hoc reimbursement to the seller.
+        line_total_gross_raw = _f(item.get("amount")) or _f(item.get("lineGrossAmount")) or 0.0
+        per_unit_price = _f(item.get("price"))
+        if per_unit_price is None and order_qty > 0:
+            per_unit_price = line_total_gross_raw / order_qty
+        per_unit_price = per_unit_price or 0.0
+
+        # Customer-borne discount only — exclude TY-covered amounts.
+        line_discount_total = _line_seller_discount(item)
+        discount_per_trendyol_unit = (line_discount_total / order_qty) if order_qty > 0 else 0.0
+
+        mappings = repo.resolve_line_mappings(barcode, stock_code, product_main_id)
+        is_mapped = bool(mappings)
+        if not is_mapped:
+            all_mapped = False
+            # Unmapped: a placeholder line so the UI can show what's blocking.
+            lines.append(InvoicePreviewLine(
+                listing_title=title,
+                barcode=barcode,
+                mapped_oblio_name=None,
+                mapped_oblio_code=None,
+                quantity=order_qty,
+                list_unit_price_gross=round(per_unit_price + discount_per_trendyol_unit, 2),
+                discount_per_unit=round(discount_per_trendyol_unit, 2),
+                unit_price_gross=round(per_unit_price, 2),
+                vat_percent=default_vat,
+                line_total_gross=round(per_unit_price * order_qty, 2),
+                is_mapped=False,
+                reason="No mapping found for this listing.",
+            ))
+            continue
+
+        # Customer-paid totals for this Trendyol order line.
+        customer_paid_total = round(per_unit_price * order_qty, 2)
+        customer_discount_total = round(line_discount_total, 2)
+
+        # Weights for splitting across N Oblio components: oblio.price × buc per row.
+        # If every weight is 0 (Oblio prices not set), fall back to equal split.
+        weights: list[tuple[dict[str, Any], int, float]] = []
+        weights_total = 0.0
+        for m in mappings:
+            buc = max(1, int(m.get("units_per_listing") or 1))
+            op_price = float(m.get("price") or 0.0)
+            w = op_price * buc
+            weights.append((m, buc, w))
+            weights_total += w
+        if weights_total <= 0:
+            weights = [(m, max(1, int(m.get("units_per_listing") or 1)), 1.0) for m in mappings]
+            weights_total = float(len(weights))
+
+        distributed_total = 0.0
+        distributed_disc = 0.0
+        for i, (m, buc, w) in enumerate(weights):
+            is_last = (i == len(weights) - 1)
+            if is_last:
+                line_share = round(customer_paid_total - distributed_total, 2)
+                disc_share = round(customer_discount_total - distributed_disc, 2)
+            else:
+                ratio = w / weights_total
+                line_share = round(customer_paid_total * ratio, 2)
+                disc_share = round(customer_discount_total * ratio, 2)
+                distributed_total += line_share
+                distributed_disc += disc_share
+
+            invoice_qty = order_qty * buc
+            if invoice_qty <= 0:
+                invoice_qty = 1
+            unit_price_gross = round(line_share / invoice_qty, 2)
+            discount_per_unit = round(disc_share / invoice_qty, 2)
+            list_unit_price_gross = round(unit_price_gross + discount_per_unit, 2)
+
+            vat = default_vat
+            override = m.get("override_vat")
+            if override is not None:
+                vat = float(override)
+            elif m.get("vat_percent") is not None:
+                vat = float(m["vat_percent"])
+
+            line_total = round(unit_price_gross * invoice_qty, 2)
+            total_gross += line_total
+            lines.append(InvoicePreviewLine(
+                listing_title=title,
+                barcode=barcode,
+                mapped_oblio_name=m.get("name"),
+                mapped_oblio_code=m.get("code"),
+                quantity=invoice_qty,
+                list_unit_price_gross=list_unit_price_gross,
+                discount_per_unit=discount_per_unit,
+                unit_price_gross=unit_price_gross,
+                vat_percent=vat,
+                line_total_gross=line_total,
+                is_mapped=True,
+            ))
+
+    shipping_amount = _detect_shipping(raw)
+    total_gross = round(total_gross + shipping_amount, 2)
+
+    return InvoicePreview(
+        order_id=order["id"],
+        order_number=order["order_number"],
+        order_status=order.get("status"),
+        buyer_name=order["buyer_name"] or "Client Trendyol",
+        buyer_email=order["buyer_email"],
+        ship_address=order["ship_address"],
+        ship_city=order["ship_city"],
+        ship_country=order["ship_country"],
+        currency=currency,
+        lines=lines,
+        shipping_amount=shipping_amount,
+        total_gross=total_gross,
+        all_mapped=all_mapped and len(lines) > 0,
+    )
+
+
+def _line_seller_discount(item: dict[str, Any]) -> float:
+    """
+    Customer-facing discount on this line, excluding any portion Trendyol covers.
+    Trendyol API uses `discount` for the total discount and `tyDiscount` /
+    `totalTyDiscount` for the part Trendyol funded; the seller-borne portion is the
+    difference. If both are absent, fall back to 0.
+    """
+    total_disc = _f(item.get("discount")) or _f(item.get("lineTotalDiscount")) or 0.0
+    ty_disc = _f(item.get("tyDiscount")) or _f(item.get("totalTyDiscount")) or 0.0
+    return max(0.0, total_disc - ty_disc)
+
+
+def _detect_shipping(raw: dict[str, Any]) -> float:
+    """
+    Trendyol generally rolls shipping into line prices for the customer. If a
+    separate shipping/cargo charge is present in the order payload, return it so
+    we can list it explicitly on the invoice. Otherwise return 0.0.
+    """
+    for key in ("cargoFee", "shippingPrice", "deliveryPrice", "shippingAmount", "cargoPrice"):
+        v = _f(raw.get(key))
+        if v and v > 0:
+            return round(v, 2)
+    return 0.0
+
+
+def auto_create_local_invoices(repo: Repo) -> tuple[int, int]:
+    """
+    For every pending order with all lines mapped AND a status in {Shipped, Delivered},
+    create a LOCAL invoice (no Oblio POST) using Oblio product names/codes/VAT in
+    place of the raw Trendyol line data.
+
+    Earlier statuses (Created, Picking, ...) are skipped — the order may still be
+    cancelled before shipping, and we don't want to issue invoices we'd have to
+    credit-note immediately.
+    Returns (created, still_pending).
+    """
+    log = get_app_logger()
+    created = 0
+    still_pending = 0
+    for o in repo.list_orders(state=InvoiceState.PENDING.value):
+        status = (o.get("status") or "").strip()
+        if status not in INVOICEABLE_TRENDYOL_STATUSES:
+            still_pending += 1
+            continue
+        # Skip orders that already have a Trendyol-side invoice link (someone else
+        # — manual Oblio web UI, prior install, etc. — already invoiced this).
+        # Our own POSTs to Trendyol happen AFTER Oblio writes oblio_link, so any
+        # `tr_invoice_link` set on a still-PENDING order is by definition external.
+        if (o.get("tr_invoice_link") or "").strip():
+            log.info("auto-invoice: skipping order %s — externally invoiced (link=%s)",
+                     o.get("order_number"), o.get("tr_invoice_link"))
+            still_pending += 1
+            continue
+        try:
+            preview = build_preview(repo, o["id"])
+        except Exception as e:
+            log.error("auto-invoice: build_preview failed for order %s: %s\n%s",
+                      o.get("order_number"), e, traceback.format_exc())
+            still_pending += 1
+            continue
+        if not preview.all_mapped:
+            still_pending += 1
+            continue
+        try:
+            _save_local_invoice(repo, preview)
+            created += 1
+        except Exception as e:
+            log.error("auto-invoice: save failed for order %s: %s\n%s",
+                      o.get("order_number"), e, traceback.format_exc())
+            still_pending += 1
+    return created, still_pending
+
+
+def _save_local_invoice(repo: Repo, preview: InvoicePreview) -> None:
+    now = datetime.now()
+    number = _next_local_number(repo, now)
+    series = repo.invoice_series()
+    # Use the Trendyol order date as the invoice's issue date when available;
+    # falls back to "today" for legacy orders that never recorded a date.
+    issue_dt = _issue_date_for(preview) or now
+    invoice_record = _local_invoice_record(preview, series, number, issue_dt, now)
+    repo.record_invoice(
+        order_id=preview.order_id,
+        series=series,
+        number=number,
+        total=preview.total_gross,
+        currency=preview.currency,
+        oblio_link=None,
+        einvoice_link=None,
+        raw_response=invoice_record,
+    )
+
+
+def _issue_date_for(preview: InvoicePreview) -> datetime | None:
+    # `preview` doesn't carry order_date directly; pull from the raw order JSON.
+    # (Cheap because we only call this once per invoice.)
+    # Importing here avoids a cycle at module top.
+    from src.storage.db import get_conn
+    row = get_conn().execute(
+        "SELECT order_date FROM orders WHERE id = ?", (preview.order_id,)
+    ).fetchone()
+    if not row or not row["order_date"]:
+        return None
+    try:
+        # order_date is stored as ISO-8601 UTC (see sync._ms_to_iso). Parse just the date part.
+        return datetime.fromisoformat(row["order_date"].replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _next_local_number(repo: Repo, now: datetime) -> str:
+    date_part = now.strftime("%Y%m%d")
+    existing = [i for i in repo.list_invoices() if (i.get("number") or "").startswith(f"LOC-{date_part}-")]
+    seq = len(existing) + 1
+    return f"LOC-{date_part}-{seq:04d}"
+
+
+def _local_invoice_record(preview: InvoicePreview, series: str, number: str,
+                          issue_dt: datetime, created_at: datetime) -> dict[str, Any]:
+    return {
+        "source": "local",
+        "issue_date": issue_dt.strftime("%Y-%m-%d"),
+        "created_at": created_at.strftime("%Y-%m-%d %H:%M"),
+        "series": series,
+        "number": number,
+        "order_number": preview.order_number,
+        "order_status": preview.order_status,
+        "buyer": {
+            "name": preview.buyer_name,
+            "email": preview.buyer_email,
+            "address": preview.ship_address,
+            "city": preview.ship_city,
+            "country": preview.ship_country,
+        },
+        "currency": preview.currency,
+        "shipping_amount": preview.shipping_amount,
+        "total_gross": preview.total_gross,
+        "lines": [
+            {
+                "original_title": l.listing_title,
+                "original_barcode": l.barcode,
+                "oblio_name": l.mapped_oblio_name,
+                "oblio_code": l.mapped_oblio_code,
+                "quantity": l.quantity,
+                "list_unit_price_gross": l.list_unit_price_gross,
+                "discount_per_unit": l.discount_per_unit,
+                "unit_price_gross": l.unit_price_gross,
+                "vat_percent": l.vat_percent,
+                "line_total_gross": l.line_total_gross,
+            }
+            for l in preview.lines
+        ],
+    }
+
+
+def send_local_invoice_to_oblio(
+    repo: Repo,
+    invoice_id: int,
+    client: OblioClient | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """
+    Take an already-existing LOCAL invoice row (i.e. drafted by auto_create_local_invoices)
+    and POST it to Oblio. On success the same row is updated with Oblio's link, einvoice
+    link, official series + number, and the raw response is overwritten with Oblio's.
+    On Oblio failure, the error is stamped on the row's `last_send_error` column.
+
+    Idempotent: if the row already has `oblio_link` set, returns the existing row
+    untouched (no POST). Caller is responsible for displaying the dedupe outcome.
+
+    `dry_run=True` builds and LOGS the Oblio payload but does NOT call Oblio. The
+    invoice row is left unchanged. Used by the "Dry run" Settings toggle so you can
+    verify what would be sent before flipping to real sends.
+    """
+    log = get_app_logger()
+    inv = repo.get_invoice(invoice_id)
+    if not inv:
+        raise RuntimeError(f"Invoice {invoice_id} not found")
+    if inv.get("oblio_link"):
+        log.info("send: invoice %s already has oblio_link, skipping (idempotent)", invoice_id)
+        return inv
+
+    order_id = inv["order_id"]
+    # External invoice guard: if the order already has a Trendyol-side invoiceLink
+    # AND we haven't sent our own copy yet, someone else (manual Oblio UI / another
+    # install) already issued the invoice. Refuse the Send to avoid a duplicate.
+    order_row = repo.get_order(order_id)
+    if order_row and (order_row.get("tr_invoice_link") or "").strip():
+        msg = (
+            f"Refused: Trendyol order {order_row.get('order_number')} already has an "
+            f"external invoice attached ({order_row.get('tr_invoice_number') or order_row.get('tr_invoice_link')}). "
+            "Skipped to prevent a duplicate."
+        )
+        repo.record_invoice_send_error(invoice_id, msg)
+        raise RuntimeError(msg)
+
+    preview = build_preview(repo, order_id)
+    if not preview.all_mapped:
+        msg = "Order has unmapped lines; map them before sending."
+        repo.record_invoice_send_error(invoice_id, msg)
+        raise RuntimeError(msg)
+    if not preview.lines:
+        msg = "Order has no invoiceable lines."
+        repo.record_invoice_send_error(invoice_id, msg)
+        raise RuntimeError(msg)
+
+    payload = _build_oblio_payload(repo, preview)
+
+    if dry_run:
+        log.warning("DRY-RUN send for invoice %s (order %s): payload=%s",
+                    invoice_id, inv.get("order_number"),
+                    json.dumps(payload, ensure_ascii=False)[:1500])
+        return {"dry_run": True, "payload": payload}
+
+    try:
+        oblio = client or build_oblio_client(repo)
+        response = oblio.create_invoice(payload)
+    except Exception as e:
+        log.error("send: Oblio rejected invoice %s: %s", invoice_id, e)
+        repo.record_invoice_send_error(invoice_id, str(e))
+        raise
+
+    data = response.get("data") or {}
+    repo.update_invoice_oblio_response(
+        invoice_id=invoice_id,
+        oblio_link=data.get("link"),
+        einvoice_link=data.get("einvoice") or data.get("einvoiceLink"),
+        series=data.get("seriesName") or None,
+        number=str(data.get("number")) if data.get("number") is not None else None,
+        total=_f(data.get("total")),
+        currency=data.get("currency"),
+        raw_response=response,
+    )
+
+    # Best-effort: push the Oblio link back to Trendyol so the customer can
+    # download the PDF from their Trendyol UI. A failure here is logged but
+    # does NOT undo the successful Oblio POST — the user can click
+    # "Re-notify Trendyol" later.
+    if not dry_run:
+        try:
+            notify_trendyol_of_invoice(repo, invoice_id)
+        except Exception as e:
+            log.warning("send: Oblio OK but Trendyol notification failed for invoice %s: %s",
+                        invoice_id, e)
+    return response
+
+
+def notify_trendyol_of_invoice(
+    repo: Repo,
+    invoice_id: int,
+    client: "TrendyolClient | None" = None,
+) -> dict[str, Any]:
+    """
+    POST the Oblio invoice link back to Trendyol.
+
+    Idempotent: if `trendyol_link_sent_at` is already set, returns without re-POSTing.
+    Requires `oblio_link` to be set (we don't notify Trendyol before Oblio is done).
+    On failure: stamps `trendyol_link_error` and re-raises.
+    """
+    from src.services.sync import build_trendyol_client  # local import to avoid cycle
+    log = get_app_logger()
+    inv = repo.get_invoice(invoice_id)
+    if not inv:
+        raise RuntimeError(f"Invoice {invoice_id} not found")
+    if inv.get("trendyol_link_sent_at"):
+        log.info("notify-trendyol: invoice %s already notified, skipping", invoice_id)
+        return inv
+    oblio_link = inv.get("oblio_link")
+    if not oblio_link:
+        msg = "Cannot notify Trendyol: invoice has no oblio_link yet (send to Oblio first)."
+        repo.record_invoice_trendyol_link_error(invoice_id, msg)
+        raise RuntimeError(msg)
+
+    order = repo.get_order(inv["order_id"])
+    if not order:
+        msg = f"Invoice {invoice_id} references missing order {inv['order_id']}"
+        repo.record_invoice_trendyol_link_error(invoice_id, msg)
+        raise RuntimeError(msg)
+
+    try:
+        raw = json.loads(order["raw_json"])
+    except (ValueError, TypeError):
+        raw = {}
+    shipment_package_id = raw.get("shipmentPackageId") or raw.get("id")
+    if not shipment_package_id:
+        msg = "Trendyol order has no shipmentPackageId; cannot notify."
+        repo.record_invoice_trendyol_link_error(invoice_id, msg)
+        raise RuntimeError(msg)
+
+    series = inv.get("series") or ""
+    number = inv.get("number") or ""
+    invoice_number = f"{series} {number}".strip()
+    currency = inv.get("currency") or order.get("currency") or "RON"
+
+    # Trendyol wants epoch ms; fall back to "now" if the issue date can't be parsed.
+    issue_iso = inv.get("issued_at") or order.get("order_date") or ""
+    invoice_date_ms = _to_epoch_ms(issue_iso)
+
+    try:
+        ty = client or build_trendyol_client(repo)
+        response = ty.send_invoice_link(
+            invoice_link=oblio_link,
+            shipment_package_id=shipment_package_id,
+            invoice_number=invoice_number,
+            invoice_date_ms=invoice_date_ms,
+            currency=currency,
+        )
+    except Exception as e:
+        log.error("notify-trendyol: invoice %s failed: %s", invoice_id, e)
+        repo.record_invoice_trendyol_link_error(invoice_id, str(e))
+        raise
+
+    repo.mark_invoice_trendyol_link_sent(invoice_id)
+    return response
+
+
+def _to_epoch_ms(iso_string: str) -> int:
+    """Parse an ISO-8601 string to epoch ms; falls back to now() on parse failure."""
+    if iso_string:
+        try:
+            dt = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
+            return int(dt.timestamp() * 1000)
+        except (ValueError, TypeError):
+            pass
+    return int(datetime.now().timestamp() * 1000)
+
+
+def auto_notify_trendyol_pending(repo: Repo) -> tuple[int, int]:
+    """Retry Trendyol notification for every Oblio-sent invoice that hasn't yet
+    been pushed to Trendyol. Called from the poll loop and bulk Send All button."""
+    log = get_app_logger()
+    sent = 0
+    failed = 0
+    for inv in repo.list_invoices():
+        if not inv.get("oblio_link"):
+            continue
+        if inv.get("trendyol_link_sent_at"):
+            continue
+        try:
+            notify_trendyol_of_invoice(repo, inv["id"])
+            sent += 1
+        except Exception as e:
+            log.error("auto-notify-trendyol: invoice %s failed: %s", inv.get("number"), e)
+            failed += 1
+    return sent, failed
+
+
+def auto_send_to_oblio(repo: Repo, dry_run: bool = False) -> tuple[int, int]:
+    """Walk every local-only invoice (no oblio_link yet) and try to send each.
+    Returns (sent_or_dry_run, failed). Errors are stamped per-invoice; we never
+    abort the batch on a single failure."""
+    log = get_app_logger()
+    sent = 0
+    failed = 0
+    for inv in repo.list_invoices():
+        if inv.get("oblio_link"):
+            continue
+        try:
+            send_local_invoice_to_oblio(repo, inv["id"], dry_run=dry_run)
+            sent += 1
+        except Exception as e:
+            log.error("auto-send: invoice %s failed: %s", inv.get("number"), e)
+            failed += 1
+    return sent, failed
+
+
+def issue_invoice(repo: Repo, order_id: int, client: OblioClient | None = None) -> dict[str, Any]:
+    preview = build_preview(repo, order_id)
+    if not preview.all_mapped:
+        raise RuntimeError("Order has unmapped lines; map them before issuing.")
+    if not preview.lines:
+        raise RuntimeError("Order has no invoiceable lines.")
+
+    oblio = client or build_oblio_client(repo)
+    payload = _build_oblio_payload(repo, preview)
+    response = oblio.create_invoice(payload)
+
+    data = response.get("data") or {}
+    series = data.get("seriesName") or repo.invoice_series()
+    number = str(data.get("number") or "")
+    total = _f(data.get("total"))
+    currency = data.get("currency") or preview.currency
+    link = data.get("link")
+    einvoice_link = data.get("einvoice") or data.get("einvoiceLink")
+
+    repo.record_invoice(
+        order_id=order_id,
+        series=series,
+        number=number,
+        total=total,
+        currency=currency,
+        oblio_link=link,
+        einvoice_link=einvoice_link,
+        raw_response=response,
+    )
+    return response
+
+
+def _build_oblio_payload(repo: Repo, preview: InvoicePreview) -> dict[str, Any]:
+    today = datetime.now().strftime("%Y-%m-%d")
+    client_block = {
+        "name": preview.buyer_name,
+        "email": preview.buyer_email or "",
+        "address": preview.ship_address or "",
+        "city": preview.ship_city or "",
+        "country": preview.ship_country or "",
+        "save": 0,
+        "autocomplete": 0,
+    }
+    products = []
+    for l in preview.lines:
+        # Each invoice line is emitted as TWO entries when there's a discount:
+        #   1. The product at LIST price, NO discount field.
+        #   2. A separate discount entry (just discount + discountType, no name/price)
+        #      which Oblio applies to the immediately preceding product line.
+        # Sending the discount on the product line itself triggers Oblio error 400
+        # "Discount-ul trebuie aplicat dupa cel putin un produs care nu are discount".
+        line_discount_total = round(l.discount_per_unit * l.quantity, 2)
+        product_line: dict[str, Any] = {
+            "name": l.mapped_oblio_name or l.listing_title,
+            "code": l.mapped_oblio_code or "",
+            "measuringUnit": "buc",
+            "currency": preview.currency,
+            "vatName": "Normala",
+            "vatPercentage": l.vat_percent,
+            "vatIncluded": 1,
+            "price": l.list_unit_price_gross,
+            "quantity": l.quantity,
+        }
+        # Enrich from our synced Oblio catalog: Oblio rejects Marfa lines that
+        # don't carry `management` (gestiune). Each Oblio product already knows
+        # which gestiune it belongs to — pull it from raw_json.
+        _enrich_product_line(repo, product_line, l.mapped_oblio_code, l.mapped_oblio_name)
+        products.append(product_line)
+
+        if line_discount_total > 0:
+            # Separate discount entry — applies to the preceding product line above.
+            products.append({
+                "name": "Discount",
+                "discount": line_discount_total,
+                "discountType": "valoric",
+            })
+
+    payload: dict[str, Any] = {
+        "cif": repo.oblio_cif(),
+        "client": client_block,
+        "issueDate": today,
+        "seriesName": repo.invoice_series(),
+        "language": repo.invoice_language(),
+        "currency": preview.currency,
+        "products": products,
+        "mentions": f"Trendyol order {preview.order_number}",
+    }
+    # Invoice-level workStation / management act as defaults for any line that
+    # didn't override them — keep them as a safety net.
+    workstation = repo.oblio_workstation()
+    if workstation:
+        payload["workStation"] = workstation
+    management = repo.oblio_management()
+    if management:
+        payload["management"] = management
+    return payload
+
+
+def _enrich_product_line(repo: Repo, line: dict[str, Any],
+                          oblio_code: str | None, oblio_name: str | None) -> None:
+    """Pull productType + management/workstation from the locally-synced Oblio
+    product so Oblio doesn't reject the invoice with 'product has no Gestiune'.
+    Silently skips if the product can't be found locally."""
+    op = None
+    if oblio_code:
+        op = repo.get_oblio_product_by_code(oblio_code)
+    if op is None and oblio_name:
+        op = repo.get_oblio_product_by_name(oblio_name)
+    if op is None:
+        return
+    try:
+        raw = json.loads(op.get("raw_json") or "{}")
+    except ValueError:
+        return
+
+    product_type = raw.get("productType")
+    if product_type:
+        line["productType"] = product_type
+
+    # For goods (Marfa), grab the first stock entry's management/workStation.
+    # Services (Serviciu) typically have no stock array; that's fine.
+    stock = raw.get("stock") or []
+    if stock:
+        first = stock[0] or {}
+        if first.get("management"):
+            line["management"] = first["management"]
+        if first.get("managementId"):
+            line["managementId"] = first["managementId"]
+        if first.get("workStation"):
+            line["workStation"] = first["workStation"]
+
+
+def _order_lines(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    lines = raw.get("lines") or raw.get("orderLines") or raw.get("packages") or []
+    if isinstance(lines, list) and lines and "lines" in (lines[0] or {}):
+        flat = []
+        for pkg in lines:
+            flat.extend(pkg.get("lines") or [])
+        return flat
+    return lines or []
+
+
+def _f(v: Any) -> float | None:
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None

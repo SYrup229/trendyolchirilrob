@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# PyInstaller build artefacts
+trendyol_full/build/
+trendyol_full/dist/
+trendyol_full/*.spec
+
+# Generated test invoices
+trendyol_full/TNDY_LOC-*.html
+TNDY_LOC-*.html
+
+# Sample / scratch data
+*.xlsx
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
