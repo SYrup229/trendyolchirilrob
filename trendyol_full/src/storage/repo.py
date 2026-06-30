@@ -81,9 +81,6 @@ class Repo:
     def oblio_management(self) -> str | None:
         return self.get_setting("oblio_management")
 
-    def oblio_auto_send(self) -> bool:
-        return self.get_setting("oblio_auto_send", "0") == "1"
-
     def oblio_dry_run(self) -> bool:
         return self.get_setting("oblio_dry_run", "0") == "1"
 

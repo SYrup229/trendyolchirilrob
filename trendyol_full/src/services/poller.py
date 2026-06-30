@@ -3,7 +3,6 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from src.services.invoicing import (
     auto_create_local_invoices,
     auto_notify_trendyol_pending,
-    auto_send_to_oblio,
 )
 from src.services.sync import fetch_and_store_orders
 from src.storage.repo import Repo
@@ -12,7 +11,6 @@ from src.storage.repo import Repo
 class OrderPoller(QObject):
     orders_fetched = Signal(int)
     invoices_created = Signal(int)
-    invoices_sent = Signal(int)  # how many local invoices were POSTed to Oblio this tick
     error = Signal(str)
 
     def __init__(self, repo: Repo, parent=None):
@@ -49,12 +47,10 @@ class OrderPoller(QObject):
         self._worker.finished.connect(self._cleanup_worker)
         self._thread.start()
 
-    def _on_done(self, payload: tuple[int, int, int]) -> None:
-        orders_count, invoices_count, sent_count = payload
+    def _on_done(self, payload: tuple[int, int]) -> None:
+        orders_count, invoices_count = payload
         self.orders_fetched.emit(orders_count)
         self.invoices_created.emit(invoices_count)
-        if sent_count:
-            self.invoices_sent.emit(sent_count)
 
     def _on_failed(self, msg: str) -> None:
         self.error.emit(msg)
@@ -68,7 +64,7 @@ class OrderPoller(QObject):
 
 
 class _FetchWorker(QObject):
-    done = Signal(tuple)  # (orders_fetched, invoices_created, invoices_sent)
+    done = Signal(tuple)  # (orders_fetched, invoices_created)
     failed = Signal(str)
     finished = Signal()
 
@@ -84,14 +80,11 @@ class _FetchWorker(QObject):
             # local DRAFTS we made for those orders before going further.
             self.repo.cleanup_externally_invoiced_drafts()
             created, _ = auto_create_local_invoices(self.repo)
-            sent = 0
-            if self.repo.oblio_auto_send():
-                sent, _ = auto_send_to_oblio(self.repo, dry_run=self.repo.oblio_dry_run())
             # Retry any Oblio-sent invoices that didn't get notified to Trendyol yet.
             # Cheap when there are none pending; absorbs transient Trendyol errors.
             if not self.repo.oblio_dry_run():
                 auto_notify_trendyol_pending(self.repo)
-            self.done.emit((count, created, sent))
+            self.done.emit((count, created))
         except Exception as e:
             self.failed.emit(str(e))
         finally:

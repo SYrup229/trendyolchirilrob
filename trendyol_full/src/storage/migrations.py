@@ -15,6 +15,12 @@ def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return column in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone() is not None
+
+
 # --- migrations ---------------------------------------------------------
 
 def _001_oblio_id(conn: sqlite3.Connection) -> None:
@@ -27,6 +33,11 @@ def _001_oblio_id(conn: sqlite3.Connection) -> None:
 
 
 def _002_units_per_listing(conn: sqlite3.Connection) -> None:
+    # Fresh installs ship a SCHEMA that has already replaced the legacy single
+    # `mappings` table with `variant_mappings` + `bundle_mappings`, so there's
+    # nothing to alter here.
+    if not _table_exists(conn, "mappings"):
+        return
     if not _has_column(conn, "mappings", "units_per_listing"):
         conn.execute("ALTER TABLE mappings ADD COLUMN units_per_listing INTEGER NOT NULL DEFAULT 1")
 
@@ -35,6 +46,9 @@ def _003_multi_oblio_mappings(conn: sqlite3.Connection) -> None:
     """Drop UNIQUE(trendyol_listing_id) so one Trendyol listing can map to multiple
     Oblio products (composite/bundle invoicing). Replace with a UNIQUE(oblio, listing)
     pair so the same listing can't be linked to the same Oblio product twice."""
+    # Fresh installs never had the legacy `mappings` table — see _002 note.
+    if not _table_exists(conn, "mappings"):
+        return
     # Detect: if the unique constraint is gone (e.g., fresh DB with new SCHEMA),
     # this migration is a no-op.
     idx_rows = conn.execute("PRAGMA index_list(mappings)").fetchall()

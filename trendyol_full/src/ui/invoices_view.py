@@ -29,6 +29,83 @@ DATE_RANGES: list[tuple[str, int | None]] = [
 ]
 
 
+class _InvoicesModel(DictRowsModel):
+    """
+    DictRowsModel + an opt-in checkbox column at index 0.
+
+    Outside select-mode the column is hidden by the view (setColumnHidden), so the
+    rest of the columns look unchanged. Inside select-mode, unsent rows (no
+    oblio_link) become checkable; rows already sent to Oblio stay flat to make it
+    visually obvious which rows are pickable.
+
+    Checked state is stored by invoice id, not row index — sorting / re-rendering
+    preserves the selection.
+    """
+
+    def __init__(self, columns, rows=None, parent=None):
+        super().__init__(columns, rows, parent)
+        self._select_mode: bool = False
+        self._checked: set[int] = set()
+
+    def set_select_mode(self, on: bool) -> None:
+        self.beginResetModel()
+        self._select_mode = on
+        if not on:
+            self._checked.clear()
+        self.endResetModel()
+
+    def select_mode(self) -> bool:
+        return self._select_mode
+
+    def checked_ids(self) -> set[int]:
+        return set(self._checked)
+
+    def _is_unsent(self, row: dict) -> bool:
+        return not bool(row.get("oblio_link"))
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if index.isValid() and index.column() == 0 and self._select_mode:
+            if role == Qt.ItemDataRole.CheckStateRole:
+                row = self._rows[index.row()]
+                if not self._is_unsent(row):
+                    return None
+                iid = row.get("id")
+                return (Qt.CheckState.Checked if iid in self._checked
+                        else Qt.CheckState.Unchecked)
+            if role == Qt.ItemDataRole.DisplayRole:
+                return ""
+            return None
+        return super().data(index, role)
+
+    def setData(self, index: QModelIndex, value, role: int = Qt.ItemDataRole.EditRole) -> bool:
+        if (index.isValid() and index.column() == 0 and self._select_mode
+                and role == Qt.ItemDataRole.CheckStateRole):
+            row = self._rows[index.row()]
+            if not self._is_unsent(row):
+                return False
+            iid = row.get("id")
+            # Qt sends either the enum or the underlying int depending on platform.
+            try:
+                state = Qt.CheckState(value)
+            except (ValueError, TypeError):
+                return False
+            if state == Qt.CheckState.Checked:
+                self._checked.add(iid)
+            else:
+                self._checked.discard(iid)
+            self.dataChanged.emit(index, index, [Qt.ItemDataRole.CheckStateRole])
+            return True
+        return False
+
+    def flags(self, index: QModelIndex):
+        base = super().flags(index)
+        if index.isValid() and index.column() == 0 and self._select_mode:
+            row = self._rows[index.row()]
+            if self._is_unsent(row):
+                return base | Qt.ItemFlag.ItemIsUserCheckable
+        return base
+
+
 class InvoicesView(QWidget):
     def __init__(self, repo: Repo):
         super().__init__()
@@ -127,7 +204,10 @@ class InvoicesView(QWidget):
                     return Qt.GlobalColor.yellow
             return None
 
-        self._model = DictRowsModel(columns=[
+        self._model = _InvoicesModel(columns=[
+            # Placeholder column 0 — hidden in normal mode, shows checkboxes for
+            # unsent rows when the user enters "send multiple" mode.
+            ("",                lambda r, role: None),
             (t("Source"),       _src),
             (t("Series"),       _txt("series")),
             (t("Number"),       _txt("number")),
@@ -145,10 +225,13 @@ class InvoicesView(QWidget):
         self.table.setModel(self._model)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # NoEditTriggers prevents text edit on double-click, but the model's
+        # ItemIsUserCheckable flag still permits clicking the checkbox.
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSortingEnabled(True)
-        # Buyer column stretches; columns shifted because of new Order date + Status.
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        # Buyer column stretches (now index 7 because of new checkbox column at 0).
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnHidden(0, True)  # hidden until "send multiple" mode is entered
         self.table.doubleClicked.connect(self._on_double_clicked)
         self.table.verticalHeader().setDefaultSectionSize(22)
 
@@ -174,6 +257,24 @@ class InvoicesView(QWidget):
         self.open_btn = QPushButton(t("Open invoice"))
         self.open_btn.clicked.connect(self._open_selected)
 
+        # Multi-select flow: entry button, plus the green Send / red Cancel pair
+        # that swaps in once the user enters "pick mode".
+        self.send_multi_btn = QPushButton(t("Send out multiple invoices"))
+        self.send_multi_btn.setObjectName("primary")
+        self.send_multi_btn.clicked.connect(self._enter_multi_mode)
+
+        self.multi_send_btn = QPushButton(t("Send"))
+        self.multi_send_btn.setStyleSheet(
+            "background-color: #2e7d32; color: white; font-weight: bold; padding: 6px 16px;"
+        )
+        self.multi_send_btn.clicked.connect(self._send_multi)
+
+        self.multi_cancel_btn = QPushButton(t("Cancel"))
+        self.multi_cancel_btn.setStyleSheet(
+            "background-color: #c62828; color: white; font-weight: bold; padding: 6px 16px;"
+        )
+        self.multi_cancel_btn.clicked.connect(self._exit_multi_mode)
+
         buttons_row = QHBoxLayout()
         buttons_row.addWidget(refresh_btn)
         buttons_row.addStretch(1)
@@ -183,6 +284,14 @@ class InvoicesView(QWidget):
         buttons_row.addWidget(self.renotify_btn)
         buttons_row.addWidget(self.send_all_btn)
         buttons_row.addWidget(self.send_btn)
+        buttons_row.addWidget(self.send_multi_btn)
+        buttons_row.addWidget(self.multi_cancel_btn)
+        buttons_row.addWidget(self.multi_send_btn)
+
+        # Multi-mode buttons start hidden — they swap in once the user clicks
+        # "Send out multiple invoices".
+        self.multi_send_btn.setVisible(False)
+        self.multi_cancel_btn.setVisible(False)
 
         self.summary = QLabel("")
         self.summary.setObjectName("subtitle")
@@ -353,6 +462,49 @@ class InvoicesView(QWidget):
             return
         QMessageBox.information(self, "Notificare reușită", "Trendyol a fost notificat cu link-ul Oblio.")
         self.refresh()
+
+    # ---- multi-select mode -------------------------------------------------
+    def _enter_multi_mode(self) -> None:
+        self._model.set_select_mode(True)
+        self.table.setColumnHidden(0, False)
+        self.table.setColumnWidth(0, 28)
+        self._set_mode(multi=True)
+
+    def _exit_multi_mode(self) -> None:
+        self._model.set_select_mode(False)
+        self.table.setColumnHidden(0, True)
+        self._set_mode(multi=False)
+
+    def _set_mode(self, multi: bool) -> None:
+        # In multi-mode only the green Send + red Cancel are visible; everything
+        # else hides so the user can't accidentally trigger a single-row action
+        # while picking checkboxes.
+        for w in (self.export_all_btn, self.export_btn, self.open_btn,
+                  self.renotify_btn, self.send_all_btn, self.send_btn,
+                  self.send_multi_btn):
+            w.setVisible(not multi)
+        self.multi_send_btn.setVisible(multi)
+        self.multi_cancel_btn.setVisible(multi)
+
+    def _send_multi(self) -> None:
+        ids = sorted(self._model.checked_ids())
+        if not ids:
+            QMessageBox.information(self, t("Pick an invoice"),
+                                    "Nu ai bifat nicio factură.")
+            return
+        dry = self.repo.oblio_dry_run()
+        verb = "DRY-RUN" if dry else "trimite"
+        ok = QMessageBox.question(
+            self, "Confirmă trimiterea",
+            f"Vrei să {verb} {len(ids)} facturi către Oblio?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ok != QMessageBox.StandardButton.Yes:
+            return
+        # Exit multi-mode first so _do_send → refresh() sees a clean UI state.
+        self._exit_multi_mode()
+        self._do_send(ids)
 
     def _export_visible(self) -> None:
         if not self._visible_rows:

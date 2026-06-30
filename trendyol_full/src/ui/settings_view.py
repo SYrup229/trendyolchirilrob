@@ -70,13 +70,6 @@ class SettingsView(QWidget):
         self.company_address = QLineEdit(repo.get_setting("company_address") or "")
         self.company_extra = QLineEdit(repo.get_setting("company_extra") or "")
 
-        self.oblio_auto_send = QCheckBox(t("Auto-send invoices to Oblio when generated"))
-        self.oblio_auto_send.setChecked(repo.oblio_auto_send())
-        self.oblio_auto_send.setToolTip(
-            "When ON, every auto-created local invoice is immediately POSTed to Oblio. "
-            "When OFF, local invoices wait for a manual click on 'Send to Oblio' in the Invoices tab."
-        )
-
         self.oblio_dry_run = QCheckBox(t("Dry run (don't actually POST to Oblio)"))
         self.oblio_dry_run.setChecked(repo.oblio_dry_run())
         self.oblio_dry_run.setToolTip(
@@ -99,7 +92,6 @@ class SettingsView(QWidget):
         form.addRow(t("Company name"), self.company_name)
         form.addRow(t("Company address"), self.company_address)
         form.addRow(t("Reg Com / IBAN / phone (optional)"), self.company_extra)
-        form.addRow("", self.oblio_auto_send)
         form.addRow("", self.oblio_dry_run)
 
         # --- sync buttons ---
@@ -202,7 +194,6 @@ class SettingsView(QWidget):
         self.company_name.setText(self.repo.get_setting("company_name") or "")
         self.company_address.setText(self.repo.get_setting("company_address") or "")
         self.company_extra.setText(self.repo.get_setting("company_extra") or "")
-        self.oblio_auto_send.setChecked(self.repo.oblio_auto_send())
         self.oblio_dry_run.setChecked(self.repo.oblio_dry_run())
 
     def _save(self) -> None:
@@ -218,7 +209,6 @@ class SettingsView(QWidget):
         repo.set_setting("company_name", self.company_name.text().strip())
         repo.set_setting("company_address", self.company_address.text().strip())
         repo.set_setting("company_extra", self.company_extra.text().strip())
-        repo.set_setting("oblio_auto_send", "1" if self.oblio_auto_send.isChecked() else "0")
         repo.set_setting("oblio_dry_run", "1" if self.oblio_dry_run.isChecked() else "0")
         if self.poll.value() != prev_poll:
             self.poll_changed.emit()

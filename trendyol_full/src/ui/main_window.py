@@ -76,7 +76,6 @@ class MainWindow(QMainWindow):
         self.poller = OrderPoller(repo, self)
         self.poller.orders_fetched.connect(self._on_orders_fetched)
         self.poller.invoices_created.connect(self._on_invoices_created)
-        self.poller.invoices_sent.connect(self._on_invoices_sent)
         self.poller.error.connect(self._on_poll_error)
         self.settings_view.poll_changed.connect(self.poller.restart)
         # Re-sync from Settings → mark dependent catalogs dirty so they reload on next view.
@@ -203,12 +202,6 @@ class MainWindow(QMainWindow):
     def _on_invoices_created(self, count: int) -> None:
         if count:
             self.status.showMessage(f"Auto-created {count} invoice(s).", 5000)
-            self._mark_dirty(self.invoices_view)
-
-    def _on_invoices_sent(self, count: int) -> None:
-        if count:
-            verb = "dry-run sent" if self.repo.oblio_dry_run() else "sent to Oblio"
-            self.status.showMessage(f"Auto-{verb}: {count} invoice(s).", 5000)
             self._mark_dirty(self.invoices_view)
 
     def _on_poll_error(self, msg: str) -> None:

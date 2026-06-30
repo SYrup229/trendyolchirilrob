@@ -537,25 +537,6 @@ def auto_notify_trendyol_pending(repo: Repo) -> tuple[int, int]:
     return sent, failed
 
 
-def auto_send_to_oblio(repo: Repo, dry_run: bool = False) -> tuple[int, int]:
-    """Walk every local-only invoice (no oblio_link yet) and try to send each.
-    Returns (sent_or_dry_run, failed). Errors are stamped per-invoice; we never
-    abort the batch on a single failure."""
-    log = get_app_logger()
-    sent = 0
-    failed = 0
-    for inv in repo.list_invoices():
-        if inv.get("oblio_link"):
-            continue
-        try:
-            send_local_invoice_to_oblio(repo, inv["id"], dry_run=dry_run)
-            sent += 1
-        except Exception as e:
-            log.error("auto-send: invoice %s failed: %s", inv.get("number"), e)
-            failed += 1
-    return sent, failed
-
-
 def issue_invoice(repo: Repo, order_id: int, client: OblioClient | None = None) -> dict[str, Any]:
     preview = build_preview(repo, order_id)
     if not preview.all_mapped:
