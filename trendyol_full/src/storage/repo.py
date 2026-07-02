@@ -548,21 +548,22 @@ class Repo:
     def refresh_local_draft(
         self,
         invoice_id: int,
+        series: str,
         total: float | None,
         currency: str | None,
         raw_response: dict[str, Any],
     ) -> bool:
         """
-        Overwrite the total/currency/raw_response of a LOCAL draft (no oblio_link).
-        No-op if the row has already been sent to Oblio — the WHERE clause guards
-        against a race where a send lands between the caller's check and the update.
-        Returns True if the row was updated.
+        Overwrite the series/total/currency/raw_response of a LOCAL draft (no
+        oblio_link). No-op if the row has already been sent to Oblio — the WHERE
+        clause guards against a race where a send lands between the caller's check
+        and the update. Returns True if the row was updated.
         """
         with tx() as conn:
             cur = conn.execute(
-                "UPDATE invoices SET total = ?, currency = ?, raw_response = ? "
+                "UPDATE invoices SET series = ?, total = ?, currency = ?, raw_response = ? "
                 "WHERE id = ? AND (oblio_link IS NULL OR oblio_link = '')",
-                (total, currency, json.dumps(raw_response, ensure_ascii=False), invoice_id),
+                (series, total, currency, json.dumps(raw_response, ensure_ascii=False), invoice_id),
             )
             return cur.rowcount > 0
 

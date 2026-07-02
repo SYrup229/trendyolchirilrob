@@ -219,7 +219,7 @@ class TrendyolClient:
                     end_date_ms: int | None = None) -> list[dict[str, Any]]:
         return list(self.iter_orders(status=status, start_date_ms=start_date_ms, end_date_ms=end_date_ms))
 
-    def iter_orders_extended(self, months_back: int = 24, window_days: int = 30,
+    def iter_orders_extended(self, months_back: int = 24, window_days: int = 7,
                              page_size: int = 200) -> Iterator[dict[str, Any]]:
         """
         Walk Trendyol orders back in fixed time windows so we can build a complete
@@ -230,10 +230,19 @@ class TrendyolClient:
         explicitly and chunk the query into `window_days`-day slices for `months_back`
         months of history. Duplicate orders across overlapping windows are deduped by
         order number on the way out.
+
+        `window_days` must stay small: Trendyol SILENTLY truncates large date ranges
+        rather than erroring. Measured on a real seller account (July 2026): a 30-day
+        window returned 4302 of 6139 orders (~30% dropped), a 15-day window dropped
+        127, while 7-day windows matched 2-day slices exactly (0 dropped, 3095 orders).
         """
         seen_orders: set[str] = set()
         end_ms = int(time.time() * 1000)
         total_windows = max(1, (months_back * 30) // window_days)
+        # Stop after ~3 months of consecutive empty windows — sellers can pause for
+        # weeks (holidays), so a handful of empty WEEKLY windows is not proof that
+        # older history is empty.
+        max_empty_windows = max(3, 90 // window_days)
         empty_in_a_row = 0
         for _ in range(total_windows):
             start_ms = end_ms - window_days * _DAY_MS
@@ -249,8 +258,8 @@ class TrendyolClient:
                 yield raw
             if window_count == 0:
                 empty_in_a_row += 1
-                if empty_in_a_row >= 3:
-                    break  # three empty months in a row: assume nothing older to find
+                if empty_in_a_row >= max_empty_windows:
+                    break
             else:
                 empty_in_a_row = 0
             end_ms = start_ms

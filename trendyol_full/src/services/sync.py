@@ -47,17 +47,18 @@ def sync_trendyol_listings(repo: Repo, progress: Callable[[str], None] | None = 
     full line metadata (productCode, sku, stockCode, productName). We build the listing
     catalog from there, upserting by stable keys so mappings survive re-syncs.
 
-    Walks the orders endpoint in fixed monthly windows for the past 24 months — without
+    Walks the orders endpoint in fixed WEEKLY windows for the past 24 months — without
     explicit date ranges, Trendyol caps the result set to the last ~14 days (~2k rows),
-    so older listings would never be discovered.
+    and even with explicit dates it SILENTLY truncates ranges much over a week (a
+    30-day window measured ~30% order loss), so the slices must stay small.
     """
     if progress: progress("Connecting to Trendyol…")
     client = build_trendyol_client(repo)
-    if progress: progress("Scanning orders for listings (24 months back)…")
+    if progress: progress("Scanning orders for listings (24 months back, weekly slices)…")
 
     seen: dict[str, dict[str, Any]] = {}
     order_count = 0
-    for raw in client.iter_orders_extended(months_back=24, window_days=30):
+    for raw in client.iter_orders_extended(months_back=24, window_days=7):
         order_count += 1
         if progress and order_count % 200 == 0:
             progress(f"Scanned {order_count} orders, {len(seen)} unique listings so far…")

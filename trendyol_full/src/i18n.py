@@ -206,6 +206,7 @@ RO: dict[str, str] = {
     "Poll interval": "Interval polling",
     "Default VAT": "TVA implicit",
     "Invoice series": "Seria facturilor",
+    "Invoice series (other countries)": "Seria facturilor (alte țări)",
     "Refresh from Oblio": "Încarcă din Oblio",
     "Invoice language": "Limba facturilor",
     "Invoice currency": "Moneda facturilor",

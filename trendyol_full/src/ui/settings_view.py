@@ -45,9 +45,17 @@ class SettingsView(QWidget):
 
         # Editable combo: pre-fills with the user's saved series, and "Refresh from
         # Oblio" populates the dropdown with the actual list from their account.
+        # Since the per-country automatic series (COUNTRY_SERIES), this value is only
+        # the fallback for countries without a dedicated series.
+        from src.services.invoicing import COUNTRY_SERIES
         self.series = QComboBox()
         self.series.setEditable(True)
         self.series.setMinimumWidth(240)
+        auto_map = ", ".join(f"{c} → {s}" for c, s in COUNTRY_SERIES.items())
+        self.series.setToolTip(
+            f"Seria se alege automat după țara comenzii: {auto_map}. "
+            f"Valoarea de aici se folosește doar pentru alte țări."
+        )
         saved = repo.invoice_series()
         if saved:
             self.series.addItem(saved)
@@ -84,7 +92,7 @@ class SettingsView(QWidget):
         form = QFormLayout()
         form.addRow(t("Poll interval"), self.poll)
         form.addRow(t("Default VAT"), self.vat)
-        form.addRow(t("Invoice series"), self._series_container)
+        form.addRow(t("Invoice series (other countries)"), self._series_container)
         form.addRow(t("Invoice language"), self.language)
         form.addRow(t("Invoice currency"), self.currency)
         form.addRow(t("Oblio workstation"), self.workstation)

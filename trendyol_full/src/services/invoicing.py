@@ -25,6 +25,9 @@ COUNTRY_VAT: dict[str, float] = {
     "BG": 20.0,
     "GR": 24.0,
     "HU": 27.0,
+    # NOTE: no 25% cota exists in the Oblio account yet — HR sends will raise the
+    # "Cota TVA 25% nu este configurată" error until the user adds one in Oblio.
+    "HR": 25.0,
 }
 
 
@@ -32,6 +35,26 @@ def _vat_for_country(country: str | None, fallback: float) -> float:
     if not country:
         return fallback
     return COUNTRY_VAT.get(country.strip().upper(), fallback)
+
+
+# Destination-country → Oblio invoice series. Every name here must exist as a
+# Factura-type series in the Oblio account (Setări → Serii documente).
+# Unknown countries fall back to the Settings "Invoice series" value.
+COUNTRY_SERIES: dict[str, str] = {
+    "RO": "ECH",
+    "BG": "BG",
+    "GR": "GR",
+    "HU": "UNG",
+    "HR": "HR",
+}
+
+
+def _series_for_country(repo: Repo, country: str | None) -> str:
+    if country:
+        mapped = COUNTRY_SERIES.get(country.strip().upper())
+        if mapped:
+            return mapped
+    return repo.invoice_series()
 
 
 @dataclass
@@ -310,15 +333,17 @@ def refresh_local_drafts(repo: Repo) -> int:
             # alone so the existing draft (and its last_send_error, if any) stays
             # visible for triage.
             continue
+        series = _series_for_country(repo, preview.ship_country)
         record = _local_invoice_record(
             preview,
-            series=inv.get("series") or repo.invoice_series(),
+            series=series,
             number=inv.get("number") or "",
             issue_dt=_issue_date_for(preview) or datetime.now(),
             created_at=datetime.now(),
         )
         if repo.refresh_local_draft(
             invoice_id=inv["id"],
+            series=series,
             total=preview.total_gross,
             currency=preview.currency,
             raw_response=record,
@@ -330,7 +355,7 @@ def refresh_local_drafts(repo: Repo) -> int:
 def _save_local_invoice(repo: Repo, preview: InvoicePreview) -> None:
     now = datetime.now()
     number = _next_local_number(repo, now)
-    series = repo.invoice_series()
+    series = _series_for_country(repo, preview.ship_country)
     # Use the Trendyol order date as the invoice's issue date when available;
     # falls back to "today" for legacy orders that never recorded a date.
     issue_dt = _issue_date_for(preview) or now
@@ -731,7 +756,7 @@ def _build_oblio_payload(repo: Repo, preview: InvoicePreview, client: OblioClien
         "cif": repo.oblio_cif(),
         "client": client_block,
         "issueDate": today,
-        "seriesName": repo.invoice_series(),
+        "seriesName": _series_for_country(repo, preview.ship_country),
         "language": repo.invoice_language(),
         "currency": preview.currency,
         "products": products,
