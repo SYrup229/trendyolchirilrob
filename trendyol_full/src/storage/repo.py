@@ -545,6 +545,27 @@ class Repo:
             )
             return invoice_id
 
+    def refresh_local_draft(
+        self,
+        invoice_id: int,
+        total: float | None,
+        currency: str | None,
+        raw_response: dict[str, Any],
+    ) -> bool:
+        """
+        Overwrite the total/currency/raw_response of a LOCAL draft (no oblio_link).
+        No-op if the row has already been sent to Oblio — the WHERE clause guards
+        against a race where a send lands between the caller's check and the update.
+        Returns True if the row was updated.
+        """
+        with tx() as conn:
+            cur = conn.execute(
+                "UPDATE invoices SET total = ?, currency = ?, raw_response = ? "
+                "WHERE id = ? AND (oblio_link IS NULL OR oblio_link = '')",
+                (total, currency, json.dumps(raw_response, ensure_ascii=False), invoice_id),
+            )
+            return cur.rowcount > 0
+
     def update_invoice_oblio_response(
         self,
         invoice_id: int,
@@ -558,13 +579,19 @@ class Repo:
     ) -> None:
         """After a successful Oblio POST: stamp the Oblio link/number on the local
         invoice row, overwrite raw_response with Oblio's payload, and clear any
-        previous error so the row is now an Oblio-sent invoice."""
+        previous error so the row is now an Oblio-sent invoice.
+
+        Also resets the Trendyol-notification state: the freshly-issued Oblio link
+        is by definition not yet on Trendyol. On a first send that's a no-op (both
+        columns already NULL); on a RE-send it un-sticks the idempotency latch so
+        the new link gets pushed to Trendyol."""
         with tx() as conn:
             conn.execute(
                 "UPDATE invoices SET oblio_link = ?, oblio_einvoice_link = ?, "
                 "series = COALESCE(?, series), number = COALESCE(?, number), "
                 "total = COALESCE(?, total), currency = COALESCE(?, currency), "
-                "raw_response = ?, last_send_error = NULL WHERE id = ?",
+                "raw_response = ?, last_send_error = NULL, "
+                "trendyol_link_sent_at = NULL, trendyol_link_error = NULL WHERE id = ?",
                 (
                     oblio_link, einvoice_link, series, number, total, currency,
                     json.dumps(raw_response, ensure_ascii=False), invoice_id,

@@ -138,6 +138,11 @@ class OblioClient:
         data = self._get("/nomenclature/management", params={"cif": self.cif})
         return data.get("data") or []
 
+    def list_vat_rates(self) -> list[dict[str, Any]]:
+        """Configured VAT rates: [{"name": "Normala", "percent": 21, "default": true}, ...]."""
+        data = self._get("/nomenclature/vat_rates", params={"cif": self.cif})
+        return data.get("data") or []
+
     def create_invoice(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/docs/invoice", payload)
 

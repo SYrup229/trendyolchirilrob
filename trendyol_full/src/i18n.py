@@ -155,6 +155,8 @@ RO: dict[str, str] = {
     "Last error": "Ultima eroare",
     "Trendyol notify": "Notificare Trendyol",
     "Re-notify Trendyol": "Re-notifică Trendyol",
+    "Resend invoice": "Retrimite factura",
+    "Hide already-sent invoices": "Ascunde facturile deja trimise",
     "Send to Oblio": "Trimite la Oblio",
     "Send all visible unsent": "Trimite toate (vizibile, netrimise)",
     "Send out multiple invoices": "Trimite mai multe facturi",

@@ -5,8 +5,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
-    QHeaderView, QLabel, QMessageBox, QPushButton, QTableView, QTableWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QTableView, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -127,9 +127,13 @@ class InvoicesView(QWidget):
         self.range_combo.setCurrentIndex(0)  # default: last 30 days
         self.range_combo.currentIndexChanged.connect(self._render)
 
+        self.hide_sent_chk = QCheckBox(t("Hide already-sent invoices"))
+        self.hide_sent_chk.toggled.connect(self._render)
+
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel(t("Show:")))
         filter_row.addWidget(self.range_combo)
+        filter_row.addWidget(self.hide_sent_chk)
         filter_row.addStretch(1)
 
         # Virtualised model+view — fast even with thousands of invoices.
@@ -234,6 +238,7 @@ class InvoicesView(QWidget):
         self.table.setColumnHidden(0, True)  # hidden until "send multiple" mode is entered
         self.table.doubleClicked.connect(self._on_double_clicked)
         self.table.verticalHeader().setDefaultSectionSize(22)
+        self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
         refresh_btn = QPushButton(t("Refresh"))
         refresh_btn.clicked.connect(self.refresh)
@@ -253,6 +258,15 @@ class InvoicesView(QWidget):
 
         self.renotify_btn = QPushButton(t("Re-notify Trendyol"))
         self.renotify_btn.clicked.connect(self._renotify_selected)
+
+        # Only visible when the selected row was already sent to Oblio. Issues a
+        # NEW Oblio invoice for the same order (used after cancelling a wrong one).
+        self.resend_btn = QPushButton(t("Resend invoice"))
+        self.resend_btn.setStyleSheet(
+            "background-color: #b26a00; color: white; font-weight: bold;"
+        )
+        self.resend_btn.setVisible(False)
+        self.resend_btn.clicked.connect(self._resend_selected)
 
         self.open_btn = QPushButton(t("Open invoice"))
         self.open_btn.clicked.connect(self._open_selected)
@@ -282,6 +296,7 @@ class InvoicesView(QWidget):
         buttons_row.addWidget(self.export_btn)
         buttons_row.addWidget(self.open_btn)
         buttons_row.addWidget(self.renotify_btn)
+        buttons_row.addWidget(self.resend_btn)
         buttons_row.addWidget(self.send_all_btn)
         buttons_row.addWidget(self.send_btn)
         buttons_row.addWidget(self.send_multi_btn)
@@ -339,9 +354,17 @@ class InvoicesView(QWidget):
             we_posted = bool((r.get("trendyol_link_sent_at") or "").strip())
             return (not has_external) or we_posted
 
+        # Optional clutter filter: hide rows already sent to Oblio (done, nothing
+        # left to do with them). Off by default.
+        def passes_sent_filter(r: dict) -> bool:
+            if not self.hide_sent_chk.isChecked():
+                return True
+            return not (r.get("oblio_link") or "").strip()
+
         rows = [
             r for r in self._all_rows
             if in_range(r) and is_invoiceable(r) and not_externally_invoiced(r)
+            and passes_sent_filter(r)
         ]
         self._visible_rows = rows
         hidden_off_status = sum(1 for r in self._all_rows if not is_invoiceable(r))
@@ -355,6 +378,13 @@ class InvoicesView(QWidget):
             f"{hidden_external} hidden (externally invoiced)"
         )
         self._model.set_rows(rows)
+        # Model reset drops the selection; the resend button is selection-driven.
+        self.resend_btn.setVisible(False)
+
+    def _on_selection_changed(self, *_args) -> None:
+        data = self._selected_row()
+        sent = bool(data and (data.get("oblio_link") or "").strip())
+        self.resend_btn.setVisible(sent and not self._model.select_mode())
 
     def _on_double_clicked(self, _idx: QModelIndex) -> None:
         self._open_selected()
@@ -443,6 +473,43 @@ class InvoicesView(QWidget):
         QMessageBox.information(self, "Trimitere finalizată", msg)
         self.refresh()
 
+    def _resend_selected(self) -> None:
+        data = self._selected_row()
+        if not data or not (data.get("oblio_link") or "").strip():
+            QMessageBox.information(self, t("Pick an invoice"), t("Select an invoice row first."))
+            return
+        confirmed = QMessageBox.warning(
+            self, "Confirmă retrimiterea",
+            f"Retrimiți factura {data.get('series') or ''} {data.get('number') or ''} "
+            f"pentru comanda {data.get('order_number') or ''}?\n\n"
+            "Se va emite o factură NOUĂ în Oblio (cu număr nou) și link-ul nou va fi "
+            "trimis către Trendyol.\n\n"
+            "Asigură-te că factura veche a fost ANULATĂ în Oblio, altfel comanda va "
+            "avea două facturi.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        dry = self.repo.oblio_dry_run()
+        try:
+            send_local_invoice_to_oblio(self.repo, data["id"], dry_run=dry, force_resend=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Retrimitere eșuată", str(e))
+            self.refresh()
+            return
+        if dry:
+            QMessageBox.information(self, "Retrimitere (DRY-RUN)",
+                                    "Payload-ul a fost doar logat — nimic trimis (Dry run activ).")
+        else:
+            fresh = self.repo.get_invoice(data["id"]) or {}
+            QMessageBox.information(
+                self, "Retrimitere reușită",
+                f"Factură nouă emisă: {fresh.get('series') or ''} {fresh.get('number') or ''}.\n"
+                "Link-ul nou a fost trimis către Trendyol (vezi coloana Notificare Trendyol).",
+            )
+        self.refresh()
+
     def _renotify_selected(self) -> None:
         data = self._selected_row()
         if not data:
@@ -485,6 +552,12 @@ class InvoicesView(QWidget):
             w.setVisible(not multi)
         self.multi_send_btn.setVisible(multi)
         self.multi_cancel_btn.setVisible(multi)
+        # Resend is selection-driven, not mode-driven: always hidden in multi
+        # mode, and on exit only shown if the selected row is a sent invoice.
+        if multi:
+            self.resend_btn.setVisible(False)
+        else:
+            self._on_selection_changed()
 
     def _send_multi(self) -> None:
         ids = sorted(self._model.checked_ids())

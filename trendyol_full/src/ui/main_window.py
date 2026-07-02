@@ -1,4 +1,5 @@
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QHBoxLayout, QListWidget, QListWidgetItem, QMainWindow, QStackedWidget, QStatusBar, QWidget,
 )
@@ -34,7 +35,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.repo = repo
         self.setWindowTitle(APP_NAME)
-        self.resize(1280, 820)
+        # Clamp the initial size to the usable desktop (minus taskbar). A fixed
+        # 1280×820 is taller than a 1366×768 laptop screen (worse with Windows
+        # DPI scaling), which pushed the bottom button rows below the screen edge.
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen else None
+        if avail is not None:
+            self.resize(min(1280, avail.width() - 40), min(820, avail.height() - 60))
+        else:
+            self.resize(1280, 820)
+        self.setMinimumSize(900, 540)
         self.setStyleSheet(APP_STYLESHEET)
 
         central = QWidget(self)

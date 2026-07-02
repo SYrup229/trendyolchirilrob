@@ -15,6 +15,25 @@ from src.storage.repo import Repo
 INVOICEABLE_STATUSES = INVOICEABLE_TRENDYOL_STATUSES
 
 
+# Destination-country → invoice VAT rate. Applied to lines whose Oblio product
+# has no VAT stored (bundles, or products imported before Oblio's cotaTVA was
+# set). Each rate here MUST also exist as a configured "cota TVA" in the user's
+# Oblio account, otherwise the Oblio API rejects the invoice.
+# RO standard VAT is 21% since Aug 2025 (the account's 19% rate is named "Veche").
+COUNTRY_VAT: dict[str, float] = {
+    "RO": 21.0,
+    "BG": 20.0,
+    "GR": 24.0,
+    "HU": 27.0,
+}
+
+
+def _vat_for_country(country: str | None, fallback: float) -> float:
+    if not country:
+        return fallback
+    return COUNTRY_VAT.get(country.strip().upper(), fallback)
+
+
 @dataclass
 class InvoicePreviewLine:
     listing_title: str
@@ -53,7 +72,10 @@ def build_preview(repo: Repo, order_id: int) -> InvoicePreview:
     if not order:
         raise ValueError(f"Order {order_id} not found")
     raw = json.loads(order["raw_json"])
-    default_vat = repo.default_vat()
+    # Pick VAT by destination country (RO/BG/GR), falling back to the Settings
+    # "Default VAT" when the ship country isn't in COUNTRY_VAT. Per-product VAT
+    # from Oblio still wins on a per-line basis below.
+    country_vat = _vat_for_country(order.get("ship_country"), repo.default_vat())
 
     lines: list[InvoicePreviewLine] = []
     total_gross = 0.0
@@ -101,7 +123,7 @@ def build_preview(repo: Repo, order_id: int) -> InvoicePreview:
                 list_unit_price_gross=round(per_unit_price + discount_per_trendyol_unit, 2),
                 discount_per_unit=round(discount_per_trendyol_unit, 2),
                 unit_price_gross=round(per_unit_price, 2),
-                vat_percent=default_vat,
+                vat_percent=country_vat,
                 line_total_gross=round(per_unit_price * order_qty, 2),
                 is_mapped=False,
                 reason="No mapping found for this listing.",
@@ -147,7 +169,7 @@ def build_preview(repo: Repo, order_id: int) -> InvoicePreview:
             discount_per_unit = round(disc_share / invoice_qty, 2)
             list_unit_price_gross = round(unit_price_gross + discount_per_unit, 2)
 
-            vat = default_vat
+            vat = country_vat
             override = m.get("override_vat")
             if override is not None:
                 vat = float(override)
@@ -263,6 +285,48 @@ def auto_create_local_invoices(repo: Repo) -> tuple[int, int]:
     return created, still_pending
 
 
+def refresh_local_drafts(repo: Repo) -> int:
+    """
+    Rebuild raw_response + total for every LOCAL draft (no oblio_link) from the
+    current order + code. Used so that changes to invoice-building logic (e.g.
+    a new country → VAT map) become visible on drafts that were created BEFORE
+    the change, without needing to delete-and-recreate. Only drafts change; rows
+    already sent to Oblio are frozen.
+    Returns the number of drafts actually rewritten.
+    """
+    log = get_app_logger()
+    refreshed = 0
+    for inv in repo.list_invoices():
+        if (inv.get("oblio_link") or "").strip():
+            continue
+        try:
+            preview = build_preview(repo, inv["order_id"])
+        except Exception as e:
+            log.warning("refresh-local-drafts: build_preview failed for invoice %s: %s",
+                        inv.get("number"), e)
+            continue
+        if not preview.all_mapped:
+            # Order has become unmappable since the draft was written — leave it
+            # alone so the existing draft (and its last_send_error, if any) stays
+            # visible for triage.
+            continue
+        record = _local_invoice_record(
+            preview,
+            series=inv.get("series") or repo.invoice_series(),
+            number=inv.get("number") or "",
+            issue_dt=_issue_date_for(preview) or datetime.now(),
+            created_at=datetime.now(),
+        )
+        if repo.refresh_local_draft(
+            invoice_id=inv["id"],
+            total=preview.total_gross,
+            currency=preview.currency,
+            raw_response=record,
+        ):
+            refreshed += 1
+    return refreshed
+
+
 def _save_local_invoice(repo: Repo, preview: InvoicePreview) -> None:
     now = datetime.now()
     number = _next_local_number(repo, now)
@@ -350,6 +414,7 @@ def send_local_invoice_to_oblio(
     invoice_id: int,
     client: OblioClient | None = None,
     dry_run: bool = False,
+    force_resend: bool = False,
 ) -> dict[str, Any]:
     """
     Take an already-existing LOCAL invoice row (i.e. drafted by auto_create_local_invoices)
@@ -363,21 +428,31 @@ def send_local_invoice_to_oblio(
     `dry_run=True` builds and LOGS the Oblio payload but does NOT call Oblio. The
     invoice row is left unchanged. Used by the "Dry run" Settings toggle so you can
     verify what would be sent before flipping to real sends.
+
+    `force_resend=True` bypasses both the oblio_link idempotency return and the
+    external-invoice guard: used by the "Resend" button after the user confirms
+    they cancelled the previous invoice in Oblio/Trendyol. A NEW Oblio invoice
+    (new number) is issued and the row is re-stamped with it.
     """
     log = get_app_logger()
     inv = repo.get_invoice(invoice_id)
     if not inv:
         raise RuntimeError(f"Invoice {invoice_id} not found")
-    if inv.get("oblio_link"):
+    if inv.get("oblio_link") and not force_resend:
         log.info("send: invoice %s already has oblio_link, skipping (idempotent)", invoice_id)
         return inv
+    if force_resend:
+        log.warning("send: FORCE RESEND for invoice %s (old link=%s)",
+                    invoice_id, inv.get("oblio_link"))
 
     order_id = inv["order_id"]
     # External invoice guard: if the order already has a Trendyol-side invoiceLink
     # AND we haven't sent our own copy yet, someone else (manual Oblio UI / another
     # install) already issued the invoice. Refuse the Send to avoid a duplicate.
+    # Skipped on force_resend — the link on the order is our own previous send,
+    # and the user has explicitly confirmed the old invoice was cancelled.
     order_row = repo.get_order(order_id)
-    if order_row and (order_row.get("tr_invoice_link") or "").strip():
+    if not force_resend and order_row and (order_row.get("tr_invoice_link") or "").strip():
         msg = (
             f"Refused: Trendyol order {order_row.get('order_number')} already has an "
             f"external invoice attached ({order_row.get('tr_invoice_number') or order_row.get('tr_invoice_link')}). "
@@ -396,7 +471,12 @@ def send_local_invoice_to_oblio(
         repo.record_invoice_send_error(invoice_id, msg)
         raise RuntimeError(msg)
 
-    payload = _build_oblio_payload(repo, preview)
+    oblio = client or build_oblio_client(repo)
+    try:
+        payload = _build_oblio_payload(repo, preview, oblio)
+    except Exception as e:
+        repo.record_invoice_send_error(invoice_id, str(e))
+        raise
 
     if dry_run:
         log.warning("DRY-RUN send for invoice %s (order %s): payload=%s",
@@ -405,7 +485,6 @@ def send_local_invoice_to_oblio(
         return {"dry_run": True, "payload": payload}
 
     try:
-        oblio = client or build_oblio_client(repo)
         response = oblio.create_invoice(payload)
     except Exception as e:
         log.error("send: Oblio rejected invoice %s: %s", invoice_id, e)
@@ -545,7 +624,7 @@ def issue_invoice(repo: Repo, order_id: int, client: OblioClient | None = None) 
         raise RuntimeError("Order has no invoiceable lines.")
 
     oblio = client or build_oblio_client(repo)
-    payload = _build_oblio_payload(repo, preview)
+    payload = _build_oblio_payload(repo, preview, oblio)
     response = oblio.create_invoice(payload)
 
     data = response.get("data") or {}
@@ -569,7 +648,41 @@ def issue_invoice(repo: Repo, order_id: int, client: OblioClient | None = None) 
     return response
 
 
-def _build_oblio_payload(repo: Repo, preview: InvoicePreview) -> dict[str, Any]:
+# Account VAT rates fetched once per process, keyed by CIF. Rates change rarely
+# (a company reconfigures them maybe once a year); a restart picks up changes.
+_VAT_RATES_CACHE: dict[str, list[dict[str, Any]]] = {}
+
+
+def _resolve_vat_name(client: OblioClient, percent: float) -> str:
+    """
+    Map a VAT percentage to the account's configured rate NAME (e.g. 20 → "bg",
+    24 → "gr"). Oblio matches invoice lines against rates by name, so sending a
+    bare percentage under the wrong name is rejected with
+    "Produsul X are cota TVA N%, dar aceasta nu este setata in Oblio".
+
+    If the rates list can't be fetched (offline dry-run, transient error), fall
+    back to "Normala" — the previous hardcoded behavior. If the list IS known and
+    the percentage isn't in it, raise with an actionable message instead of
+    letting Oblio return its crypto-brief 400.
+    """
+    rates = _VAT_RATES_CACHE.get(client.cif)
+    if rates is None:
+        try:
+            rates = client.list_vat_rates()
+            _VAT_RATES_CACHE[client.cif] = rates
+        except Exception as e:
+            get_app_logger().warning("vat-rates fetch failed, falling back to 'Normala': %s", e)
+            return "Normala"
+    for r in rates:
+        if abs(float(r.get("percent") or 0) - percent) < 0.01:
+            return str(r.get("name"))
+    raise RuntimeError(
+        f"Cota TVA {percent:g}% nu este configurată în contul Oblio. "
+        f"Adaug-o în Oblio (Setări → Cote TVA), apoi reîncearcă."
+    )
+
+
+def _build_oblio_payload(repo: Repo, preview: InvoicePreview, client: OblioClient) -> dict[str, Any]:
     today = datetime.now().strftime("%Y-%m-%d")
     client_block = {
         "name": preview.buyer_name,
@@ -594,7 +707,7 @@ def _build_oblio_payload(repo: Repo, preview: InvoicePreview) -> dict[str, Any]:
             "code": l.mapped_oblio_code or "",
             "measuringUnit": "buc",
             "currency": preview.currency,
-            "vatName": "Normala",
+            "vatName": _resolve_vat_name(client, l.vat_percent),
             "vatPercentage": l.vat_percent,
             "vatIncluded": 1,
             "price": l.list_unit_price_gross,

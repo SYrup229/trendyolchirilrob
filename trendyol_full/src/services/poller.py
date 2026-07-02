@@ -3,6 +3,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from src.services.invoicing import (
     auto_create_local_invoices,
     auto_notify_trendyol_pending,
+    refresh_local_drafts,
 )
 from src.services.sync import fetch_and_store_orders
 from src.storage.repo import Repo
@@ -79,6 +80,9 @@ class _FetchWorker(QObject):
             # link attached (e.g. user issued manually in Oblio web UI), drop any
             # local DRAFTS we made for those orders before going further.
             self.repo.cleanup_externally_invoiced_drafts()
+            # Refresh unsent drafts so changes to invoicing logic (e.g. country VAT
+            # map) propagate to old drafts without a delete-and-recreate.
+            refresh_local_drafts(self.repo)
             created, _ = auto_create_local_invoices(self.repo)
             # Retry any Oblio-sent invoices that didn't get notified to Trendyol yet.
             # Cheap when there are none pending; absorbs transient Trendyol errors.

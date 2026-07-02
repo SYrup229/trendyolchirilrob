@@ -11,9 +11,9 @@ trendyol_full/build/
 trendyol_full/dist/
 trendyol_full/*.spec
 
-# Generated test invoices
-trendyol_full/TNDY_LOC-*.html
-TNDY_LOC-*.html
+# Generated test invoices (any series)
+trendyol_full/*LOC-*.html
+*LOC-*.html
 
 # Sample / scratch data
 *.xlsx
