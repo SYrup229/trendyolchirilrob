@@ -95,15 +95,17 @@ class MappingView(QWidget):
         pair_btn.setObjectName("primary")
         pair_btn.clicked.connect(self._open_pair_dialog)
 
-        self.mappings_table = QTableWidget(0, 6)
+        # No Stock code column — Trendyol International sends only the literal
+        # "merchantSku" placeholder there; the title takes the freed width.
+        self.mappings_table = QTableWidget(0, 5)
         self.mappings_table.setHorizontalHeaderLabels(
-            [t("Trendyol title"), t("Barcode"), t("Stock code"), t("Buc"), t("TVA %"), ""]
+            [t("Trendyol title"), t("Barcode"), t("Buc"), t("TVA %"), ""]
         )
         self.mappings_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.mappings_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.mappings_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.mappings_table.setColumnWidth(3, 80)
-        self.mappings_table.setColumnWidth(4, 90)
+        self.mappings_table.setColumnWidth(2, 80)
+        self.mappings_table.setColumnWidth(3, 90)
         self.mappings_table.setAlternatingRowColors(True)
         self.mappings_table.setShowGrid(False)
         self.mappings_table.verticalHeader().setVisible(False)
@@ -214,7 +216,6 @@ class MappingView(QWidget):
         for row, m in enumerate(maps):
             self.mappings_table.setItem(row, 0, QTableWidgetItem(m.get("title") or ""))
             self.mappings_table.setItem(row, 1, QTableWidgetItem(m.get("barcode") or ""))
-            self.mappings_table.setItem(row, 2, QTableWidgetItem(m.get("stock_code") or ""))
 
             # Buc spinbox: how many Oblio units = 1 Trendyol unit on this listing.
             spin = QSpinBox()
@@ -223,37 +224,37 @@ class MappingView(QWidget):
             spin.setValue(int(m.get("units_per_listing") or 1))
             spin.blockSignals(False)  # only USER changes from here should fire the cascade
             spin.setToolTip(
-                "Number of Oblio units that one Trendyol listing unit represents.\n"
-                "Example: a 'Pack of 100' on Trendyol → '50-pack' in Oblio with Buc=2."
+                "Câte unități Oblio reprezintă o unitate din anunțul Trendyol.\n"
+                "Exemplu: 'Pachet de 100' pe Trendyol → 'pachet de 50' în Oblio cu Buc=2."
             )
             spin.valueChanged.connect(
                 lambda v, mid=m["id"], lid=m.get("trendyol_listing_id") or 0: self._update_units(mid, v, lid)
             )
-            self.mappings_table.setCellWidget(row, 3, spin)
+            self.mappings_table.setCellWidget(row, 2, spin)
 
             # Per-mapping VAT override. -1 means "use global default" (blank in UI).
             vat_spin = QDoubleSpinBox()
             vat_spin.setRange(-1.0, 100.0)
             vat_spin.setDecimals(2)
-            vat_spin.setSpecialValueText("default")   # shown when value == minimum
+            vat_spin.setSpecialValueText("implicit")   # shown when value == minimum
             vat_spin.setSuffix(" %")
             v = m.get("vat_percent")
             vat_spin.blockSignals(True)
             vat_spin.setValue(float(v) if v is not None else -1.0)
             vat_spin.blockSignals(False)
             vat_spin.setToolTip(
-                "VAT % for invoice lines from this listing.\n"
-                "Set to 'default' to inherit the global VAT (Settings)."
+                "TVA % pentru liniile de factură din acest anunț.\n"
+                "Lasă pe 'implicit' pentru a folosi TVA-ul automat (după țara comenzii)."
             )
             vat_spin.valueChanged.connect(
                 lambda v, mid=m["id"], lid=m.get("trendyol_listing_id") or 0: self._update_vat(mid, v, lid)
             )
-            self.mappings_table.setCellWidget(row, 4, vat_spin)
+            self.mappings_table.setCellWidget(row, 3, vat_spin)
 
             btn = QPushButton(t("Remove"))
             btn.setObjectName("danger")
             btn.clicked.connect(lambda _=False, mid=m["id"]: self._remove_mapping(mid))
-            self.mappings_table.setCellWidget(row, 5, btn)
+            self.mappings_table.setCellWidget(row, 4, btn)
 
     def _update_units(self, mapping_id: int, units: int, listing_id: int) -> None:
         self.repo.update_variant_units(mapping_id, units)
@@ -283,7 +284,7 @@ class MappingView(QWidget):
     def _open_pair_dialog(self) -> None:
         product = self._selected_product()
         if not product:
-            QMessageBox.information(self, "Pick a product", "Select an Oblio product first.")
+            QMessageBox.information(self, t("Pick a product"), t("Select an Oblio product first."))
             return
         dlg = PairDialog(self.repo, product, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -299,25 +300,25 @@ class PairDialog(QDialog):
         super().__init__(parent)
         self.repo = repo
         self.product = oblio_product
-        self.setWindowTitle(f"Pair listings — {oblio_product['name']}")
+        self.setWindowTitle(t("Pair listings — ") + oblio_product['name'])
         self.resize(780, 560)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search Trendyol listings (title, barcode, stock code)…")
+        self.search.setPlaceholderText("Caută anunțuri Trendyol (titlu, cod de bare)…")
         attach_search_debounce(self.search, self._reload)
 
         # Multi-Oblio is allowed: a listing already mapped to other Oblio products
         # should still be pickable. We only filter out listings already linked TO
         # THIS Oblio product (so we don't show the user duplicates).
-        self.only_unmapped = QCheckBox("Hide listings already linked to this product")
+        self.only_unmapped = QCheckBox("Ascunde anunțurile deja asociate acestui produs")
         self.only_unmapped.setChecked(True)
         self.only_unmapped.stateChanged.connect(self._reload)
 
         self.selection_label = QLabel("")
         self.selection_label.setObjectName("subtitle")
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["", "Title", "Barcode", "Stock code", "Brand"])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["", t("Title"), t("Barcode"), "Brand"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -333,12 +334,13 @@ class PairDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         save_btn = buttons.button(QDialogButtonBox.StandardButton.Save)
         save_btn.setObjectName("primary")
-        save_btn.setText("Link selected")
+        save_btn.setText(t("Link selected"))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(t("Cancel"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        title = QLabel(f"Linking to: <b>{oblio_product['name']}</b>")
+        title = QLabel(t("Linking to: ") + f"<b>{oblio_product['name']}</b>")
         title.setObjectName("title")
         layout.addWidget(title)
         layout.addWidget(self.search)
@@ -369,8 +371,7 @@ class PairDialog(QDialog):
             self.table.setItem(row, 0, check_item)
             self.table.setItem(row, 1, QTableWidgetItem(l.get("title") or ""))
             self.table.setItem(row, 2, QTableWidgetItem(l.get("barcode") or ""))
-            self.table.setItem(row, 3, QTableWidgetItem(l.get("stock_code") or ""))
-            self.table.setItem(row, 4, QTableWidgetItem(l.get("brand") or ""))
+            self.table.setItem(row, 3, QTableWidgetItem(l.get("brand") or ""))
         self.table.blockSignals(False)
         self._update_selection_label()
 

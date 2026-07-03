@@ -494,22 +494,26 @@ class Repo:
     # ---------- orders ----------
     def upsert_order(self, order: dict[str, Any]) -> int:
         """
-        Insert or update an order. The DO UPDATE is guarded by a WHERE that skips
-        the write when the payload is byte-identical — so `fetched_at` means
-        "when the order's content last CHANGED", not "when we last polled".
-        The invoice draft-refresh uses that timestamp to skip untouched orders.
-        (raw_json alone is a sufficient change proxy: every other stored column
-        is derived from it.)
+        Insert or update an order row — keyed by SHIPMENT PACKAGE id, since a
+        Trendyol order can be split into several packages that each carry their
+        own status/lines and get invoiced separately.
+
+        The DO UPDATE is guarded by a WHERE that skips the write when the
+        payload is byte-identical — so `fetched_at` means "when the package's
+        content last CHANGED", not "when we last polled". The invoice
+        draft-refresh uses that timestamp to skip untouched orders. (raw_json
+        alone is a sufficient change proxy: every other stored column is
+        derived from it.)
         """
         now = _now()
         with tx() as conn:
             cur = conn.execute(
-                "INSERT INTO orders(order_number, status, buyer_name, buyer_email, "
+                "INSERT INTO orders(package_id, order_number, status, buyer_name, buyer_email, "
                 "  ship_address, ship_city, ship_country, currency, total_amount, "
                 "  order_date, raw_json, fetched_at, "
                 "  tr_invoice_link, tr_invoice_link_date_ms, tr_invoice_number) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(order_number) DO UPDATE SET "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(package_id) DO UPDATE SET "
                 "    status = excluded.status, "
                 "    raw_json = excluded.raw_json, "
                 "    fetched_at = excluded.fetched_at, "
@@ -519,6 +523,7 @@ class Repo:
                 "WHERE orders.raw_json IS NOT excluded.raw_json "
                 "RETURNING id",
                 (
+                    order["package_id"],
                     order["order_number"],
                     order["status"],
                     order.get("buyer_name"),
@@ -540,9 +545,9 @@ class Repo:
             if row is not None:
                 return row[0]
             # Conflict + unchanged payload → the guarded UPDATE was skipped and
-            # RETURNING produced no row; the order already exists untouched.
+            # RETURNING produced no row; the package already exists untouched.
             existing = conn.execute(
-                "SELECT id FROM orders WHERE order_number = ?", (order["order_number"],)
+                "SELECT id FROM orders WHERE package_id = ?", (order["package_id"],)
             ).fetchone()
             return existing[0]
 

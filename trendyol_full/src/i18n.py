@@ -87,7 +87,7 @@ RO: dict[str, str] = {
     "New products appear after their first sale — map them here directly.":
         "Toate anunțurile din istoricul comenzilor, cu statusul lor de asociere. "
         "Produsele noi apar după prima vânzare — asociază-le direct de aici.",
-    "Filter by title, barcode, stock code or product code…": "Filtrează după titlu, cod de bare, stock code sau cod produs…",
+    "Filter by title, barcode or product code…": "Filtrează după titlu, cod de bare sau cod produs…",
     "Mapped": "Asociat",
     "Unmapped": "Neasociat",
     "Map as variant…": "Asociază ca variantă…",
@@ -212,6 +212,14 @@ RO: dict[str, str] = {
     "OK_STATUS": "OK",
 
     # ---- Settings ----
+    "Reset": "Resetare",
+    "Reset all mappings…": "Șterge toate mapările…",
+    "Wipe every mapping between Trendyol listings and Oblio products. "
+    "All local invoices that were generated from those mappings will be deleted too. "
+    "Settings, credentials, orders and Oblio/Trendyol catalogs are NOT touched.":
+        "Șterge toate mapările dintre anunțurile Trendyol și produsele Oblio. "
+        "Toate facturile locale generate din acele mapări vor fi șterse și ele. "
+        "Setările, credențialele, comenzile și cataloagele Oblio/Trendyol NU sunt atinse.",
     "Poll interval": "Interval polling",
     "Default VAT": "TVA implicit",
     "Invoice series": "Seria facturilor",

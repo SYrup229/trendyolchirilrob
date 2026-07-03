@@ -174,14 +174,14 @@ class CampaignRebaseView(QWidget):
     def _compute(self) -> None:
         a = self.a_path.text().strip()
         if not a:
-            QMessageBox.warning(self, "Excel A required", "Pick the previous-campaign Excel first.")
+            QMessageBox.warning(self, "Lipsește Excel A", "Alege mai întâi Excel-ul campaniei anterioare.")
             return
         b = ""
         if self.have_b.isChecked():
             b = self.b_path.text().strip()
             if not b:
-                QMessageBox.warning(self, "Excel B required",
-                                    "Pick the new-campaign template, or uncheck the option to generate.")
+                QMessageBox.warning(self, "Lipsește Excel B",
+                                    "Alege șablonul campaniei noi sau debifează opțiunea pentru a-l genera.")
                 return
         params = dict(
             old_discount=self.old_disc.value(),
@@ -192,17 +192,17 @@ class CampaignRebaseView(QWidget):
 
         # Reading and rebasing thousands of rows is CPU/IO heavy — run off the UI thread.
         def job(progress):
-            progress("Reading Excel A…")
+            progress("Citire Excel A…")
             source = cr.read_excel(a)
             target = None
             if b:
-                progress("Reading Excel B…")
+                progress("Citire Excel B…")
                 target = cr.read_excel(b)
-            progress("Computing new prices…")
+            progress("Calculare prețuri noi…")
             result = cr.rebase(source=source, target=target, **params)
             return source, target, result
 
-        dlg = BusyDialog("Computing", "Starting…", self)
+        dlg = BusyDialog("Calculare", "Pornire…", self)
         runner = TaskRunner(job, self)
         runner.progress.connect(dlg.set_message)
 
@@ -217,7 +217,7 @@ class CampaignRebaseView(QWidget):
 
         def on_failed(msg):
             dlg.reject()
-            QMessageBox.critical(self, "Compute failed", msg)
+            QMessageBox.critical(self, "Calcul eșuat", msg)
 
         runner.done.connect(on_done)
         runner.failed.connect(on_failed)
@@ -304,10 +304,10 @@ class CampaignRebaseView(QWidget):
             return
         kept = self._kept_row_indices()
         if not kept:
-            QMessageBox.warning(self, "Nothing to save", "All products are unchecked. Check at least one row.")
+            QMessageBox.warning(self, "Nimic de salvat", "Toate produsele sunt debifate. Bifează cel puțin un rând.")
             return
         default_name = self._suggested_filename()
-        path, _ = QFileDialog.getSaveFileName(self, "Save new-campaign Excel", default_name, "Excel (*.xlsx)")
+        path, _ = QFileDialog.getSaveFileName(self, "Salvează Excel-ul campaniei noi", default_name, "Excel (*.xlsx)")
         if not path:
             return
         try:
@@ -316,9 +316,9 @@ class CampaignRebaseView(QWidget):
             else:
                 out = cr.write_generated_excel(self._source_doc, self._result, Path(path), kept_row_indices=kept)
         except Exception as e:
-            QMessageBox.critical(self, "Save failed", str(e))
+            QMessageBox.critical(self, "Salvare eșuată", str(e))
             return
-        QMessageBox.information(self, "Saved", f"Wrote {out}\n\nKept {len(kept)} products in the new campaign.")
+        QMessageBox.information(self, "Salvat", f"Scris {out}\n\nPăstrate {len(kept)} produse în campania nouă.")
 
     def _suggested_filename(self) -> str:
         d = int(self.new_disc.value())

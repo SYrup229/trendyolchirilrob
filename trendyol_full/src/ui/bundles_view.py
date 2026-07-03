@@ -303,6 +303,7 @@ class _OblioPickerDialog(QDialog):
         save = buttons.button(QDialogButtonBox.StandardButton.Save)
         save.setObjectName("primary")
         save.setText(t("Add"))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(t("Cancel"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 

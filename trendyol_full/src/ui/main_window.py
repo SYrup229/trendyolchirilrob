@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
         invalidated, created = payload
         if invalidated or created:
             self.status.showMessage(
-                f"Mappings updated: regenerated {created} invoice(s) ({invalidated} replaced).",
+                f"Mapări actualizate: {created} facturi regenerate ({invalidated} înlocuite).",
                 5000,
             )
         # Mapping edits can originate from any of the three mapping-capable tabs;
@@ -190,7 +190,7 @@ class MainWindow(QMainWindow):
                          self.mapping_view, self.bundles_view)
 
     def _on_cascade_failed(self, msg: str) -> None:
-        self.status.showMessage(f"Mapping update error: {msg}", 8000)
+        self.status.showMessage(f"Eroare la actualizarea mapărilor: {msg}", 8000)
 
     def _cascade_cleanup(self) -> None:
         self._cascade_runner = None
@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
     # --- poller signals -----------------------------------------------------
 
     def _on_orders_fetched(self, count: int) -> None:
-        self.status.showMessage(f"Order poll: upserted {count} orders", 5000)
+        self.status.showMessage(f"Poll comenzi: {count} comenzi actualizate", 5000)
         self._mark_dirty(self.products_view)
 
     def _on_data_synced(self) -> None:
@@ -212,21 +212,21 @@ class MainWindow(QMainWindow):
         try:
             invalidated = self.repo.invalidate_local_invoices()
         except Exception as e:
-            self.status.showMessage(f"Mapping reset error: {e}", 8000)
+            self.status.showMessage(f"Eroare la resetarea mapărilor: {e}", 8000)
             return
         self.status.showMessage(
-            f"Mappings reset: removed {removed}, dropped {invalidated} local invoice(s).",
+            f"Mapări resetate: {removed} șterse, {invalidated} facturi locale eliminate.",
             6000,
         )
         self._mark_dirty(self.mapping_view, self.bundles_view, self.products_view, self.invoices_view)
 
     def _on_invoices_created(self, count: int) -> None:
         if count:
-            self.status.showMessage(f"Auto-created {count} invoice(s).", 5000)
+            self.status.showMessage(f"{count} facturi create automat.", 5000)
             self._mark_dirty(self.invoices_view)
 
     def _on_poll_error(self, msg: str) -> None:
-        self.status.showMessage(f"Poll error: {msg}", 8000)
+        self.status.showMessage(f"Eroare poll: {msg}", 8000)
 
     # --- nav helpers --------------------------------------------------------
 

@@ -29,6 +29,11 @@ class SetupWizard(QWizard):
         self.resize(720, 520)
         self.setStyleSheet(APP_STYLESHEET)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)
+        # Qt's stock wizard buttons render in English (no Qt translations loaded).
+        self.setButtonText(QWizard.WizardButton.NextButton, "Înainte >")
+        self.setButtonText(QWizard.WizardButton.BackButton, "< Înapoi")
+        self.setButtonText(QWizard.WizardButton.FinishButton, "Finalizează")
+        self.setButtonText(QWizard.WizardButton.CancelButton, t("Cancel"))
 
         self.page_welcome = WelcomePage()
         self.page_oblio = OblioPage(repo)
@@ -94,7 +99,7 @@ class OblioPage(QWizardPage):
         # don't force the user to click "Test connection" again.
         self._tested = self._fingerprint() == repo.get_setting("oblio_tested_fp")
         if self._tested:
-            self.status.setText("Connected previously — Next to continue, or re-test if anything changed.")
+            self.status.setText(t("Connected previously — Next to continue, or re-test if anything changed."))
             self.status.setObjectName("badge-ok")
         # any field edit invalidates the cached pass
         for w in (self.email, self.secret, self.cif):
@@ -106,7 +111,7 @@ class OblioPage(QWizardPage):
     def _mark_untested(self) -> None:
         if self._tested:
             self._tested = False
-            self.status.setText("Credentials changed — please re-test.")
+            self.status.setText(t("Credentials changed — please re-test."))
             self.status.setObjectName("badge-warn")
             self.style().polish(self.status)
             self.completeChanged.emit()
@@ -116,7 +121,7 @@ class OblioPage(QWizardPage):
         secret = self.secret.text().strip()
         cif = self.cif.text().strip()
         if not (email and secret and cif):
-            self.status.setText("Please fill email, secret and CIF.")
+            self.status.setText(t("Please fill email, secret and CIF."))
             self.status.setObjectName("badge-err")
             self.style().polish(self.status)
             return
@@ -128,7 +133,7 @@ class OblioPage(QWizardPage):
             self.status.setObjectName("badge-err")
             self.style().polish(self.status)
             return
-        self.status.setText("Connected successfully.")
+        self.status.setText(t("Connected successfully."))
         self.status.setObjectName("badge-ok")
         self.style().polish(self.status)
         self.repo.set_setting("oblio_tested_fp", self._fingerprint())
@@ -171,9 +176,9 @@ class TrendyolPage(QWizardPage):
         form.addRow(t("API secret (Secret API)"), self.api_secret)
 
         hint = QLabel(
-            "Tip: Trendyol International (RO/GR/BG) uses the path prefix <b>/integration/international</b>. "
-            "Trendyol Turkey uses <b>/integration</b>. If you get error 556 'Service Unavailable' from Cloudflare, "
-            "you're hitting the wrong tenant — make sure <b>/international</b> is in the URL."
+            "Sfat: Trendyol International (RO/GR/BG) folosește prefixul <b>/integration/international</b>. "
+            "Trendyol Turcia folosește <b>/integration</b>. Dacă primești eroarea 556 'Service Unavailable' "
+            "de la Cloudflare, ai nimerit tenant-ul greșit — verifică să ai <b>/international</b> în URL."
         )
         hint.setWordWrap(True)
         hint.setObjectName("subtitle")
@@ -190,7 +195,7 @@ class TrendyolPage(QWizardPage):
 
         self._tested = self._fingerprint() == repo.get_setting("trendyol_tested_fp")
         if self._tested:
-            self.status.setText("Connected previously — Next to continue, or re-test if anything changed.")
+            self.status.setText(t("Connected previously — Next to continue, or re-test if anything changed."))
             self.status.setObjectName("badge-ok")
         for w in (self.base_url, self.seller_id, self.integration_ref, self.api_key, self.api_secret):
             w.textChanged.connect(self._mark_untested)
@@ -205,7 +210,7 @@ class TrendyolPage(QWizardPage):
     def _mark_untested(self) -> None:
         if self._tested:
             self._tested = False
-            self.status.setText("Credentials changed — please re-test.")
+            self.status.setText(t("Credentials changed — please re-test."))
             self.status.setObjectName("badge-warn")
             self.style().polish(self.status)
             self.completeChanged.emit()
@@ -217,7 +222,7 @@ class TrendyolPage(QWizardPage):
         sec = self.api_secret.text().strip()
         ref = self.integration_ref.text().strip() or None
         if not (base and sid and key and sec):
-            self.status.setText("Please fill all fields (integration reference is optional for Trendyol TR).")
+            self.status.setText(t("Please fill all fields (integration reference is optional for Trendyol TR)."))
             self.status.setObjectName("badge-err")
             self.style().polish(self.status)
             return
@@ -229,7 +234,7 @@ class TrendyolPage(QWizardPage):
             self.status.setObjectName("badge-err")
             self.style().polish(self.status)
             return
-        self.status.setText("Connected successfully.")
+        self.status.setText(t("Connected successfully."))
         self.status.setObjectName("badge-ok")
         self.style().polish(self.status)
         self.repo.set_setting("trendyol_tested_fp", self._fingerprint())
@@ -273,7 +278,7 @@ class InitialSyncPage(QWizardPage):
 
     def _run_sync(self) -> None:
         repo = self.repo
-        dlg = BusyDialog("Initial sync", "Starting…", self)
+        dlg = BusyDialog(t("Initial sync"), "Pornire…", self)
 
         def job(progress):
             progress("Pulling Oblio products…")
@@ -296,7 +301,7 @@ class InitialSyncPage(QWizardPage):
 
         def on_failed(msg):
             dlg.reject()
-            QMessageBox.critical(self, "Sync failed", msg)
+            QMessageBox.critical(self, "Sincronizare eșuată", msg)
             self.status.setText(f"Failed: {msg}")
             self.status.setObjectName("badge-err")
             self.style().polish(self.status)

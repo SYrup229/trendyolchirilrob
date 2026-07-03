@@ -208,6 +208,78 @@ def _008_perf(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(number)")
 
 
+def _009_orders_per_package(conn: sqlite3.Connection) -> None:
+    """Key orders by Trendyol SHIPMENT PACKAGE, not order number.
+
+    Trendyol returns one entry per package and an order can be split into
+    several packages (each with its own status, lines and quantities). With
+    UNIQUE(order_number) all packages of a split order fought over one row —
+    and because the feed is sorted newest-modified-first, the STALEST package
+    was upserted last and won every poll. Split orders were stuck on the dead
+    original package (e.g. UnPacked qty=5) and never became invoiceable.
+
+    Rebuild: package_id column (backfilled from raw_json's $.id, falling back
+    to order_number for legacy rows), UNIQUE on package_id, order_number kept
+    as a plain indexed column. Row ids are preserved so invoices.order_id FKs
+    stay valid.
+    """
+    if _has_column(conn, "orders", "package_id"):
+        return
+    # The rebuild DROPs the parent table of invoices.order_id. With
+    # foreign_keys=ON, SQLite implicitly DELETEs parent rows on DROP TABLE —
+    # which would CASCADE into invoices. The pragma is a no-op inside a
+    # transaction, so close any open one first.
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.execute("BEGIN")
+        conn.execute("""
+            CREATE TABLE orders_new (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                package_id    TEXT NOT NULL UNIQUE,
+                order_number  TEXT NOT NULL,
+                status        TEXT NOT NULL,
+                buyer_name    TEXT,
+                buyer_email   TEXT,
+                ship_address  TEXT,
+                ship_city     TEXT,
+                ship_country  TEXT,
+                currency      TEXT,
+                total_amount  REAL,
+                order_date    TEXT,
+                raw_json      TEXT NOT NULL,
+                fetched_at    TEXT NOT NULL,
+                invoice_state TEXT NOT NULL DEFAULT 'pending',
+                tr_invoice_link         TEXT,
+                tr_invoice_link_date_ms INTEGER,
+                tr_invoice_number       TEXT
+            )
+        """)
+        conn.execute("""
+            INSERT INTO orders_new(id, package_id, order_number, status, buyer_name,
+                buyer_email, ship_address, ship_city, ship_country, currency,
+                total_amount, order_date, raw_json, fetched_at, invoice_state,
+                tr_invoice_link, tr_invoice_link_date_ms, tr_invoice_number)
+            SELECT id,
+                   COALESCE(CAST(json_extract(raw_json, '$.id') AS TEXT), order_number),
+                   order_number, status, buyer_name,
+                   buyer_email, ship_address, ship_city, ship_country, currency,
+                   total_amount, order_date, raw_json, fetched_at, invoice_state,
+                   tr_invoice_link, tr_invoice_link_date_ms, tr_invoice_number
+            FROM orders
+        """)
+        conn.execute("DROP TABLE orders")
+        conn.execute("ALTER TABLE orders_new RENAME TO orders")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_state ON orders(invoice_state)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_number ON orders(order_number)")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
 MIGRATIONS: list[Migration] = [
     ("001_oblio_id", _001_oblio_id),
     ("002_units_per_listing", _002_units_per_listing),
@@ -217,6 +289,7 @@ MIGRATIONS: list[Migration] = [
     ("006_trendyol_invoice_link", _006_trendyol_invoice_link),
     ("007_order_invoice_link", _007_order_invoice_link),
     ("008_perf", _008_perf),
+    ("009_orders_per_package", _009_orders_per_package),
 ]
 
 

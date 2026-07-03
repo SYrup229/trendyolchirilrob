@@ -44,7 +44,7 @@ class TrendyolProductsView(QWidget):
         subtitle.setWordWrap(True)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText(t("Filter by title, barcode, stock code or product code…"))
+        self.search.setPlaceholderText(t("Filter by title, barcode or product code…"))
         self.search.textChanged.connect(self._on_filter_changed)
 
         self.unmapped_only_chk = QCheckBox(t("Show only unmapped"))
@@ -63,10 +63,11 @@ class TrendyolProductsView(QWidget):
                 return (t("Mapped"), *PILL_GREEN)
             return (t("Unmapped"), *PILL_AMBER)
 
+        # No Stock code column: Trendyol International sends the literal
+        # placeholder "merchantSku" there for every product — pure noise.
         self._model = DictRowsModel(columns=[
             (t("Trendyol title"), lambda r, role: r["title"] if role == Qt.ItemDataRole.DisplayRole else None),
             (t("Barcode"),        lambda r, role: r["barcode"] if role == Qt.ItemDataRole.DisplayRole else None),
-            (t("Stock code"),     lambda r, role: r["stock_code"] if role == Qt.ItemDataRole.DisplayRole else None),
             (t("Product code"),   lambda r, role: r["product_main_id"] if role == Qt.ItemDataRole.DisplayRole else None),
             ("Oblio →",           lambda r, role: r["mapped_text"] if role == Qt.ItemDataRole.DisplayRole else None),
             (t("Status"),         lambda r, role: (t("Mapped") if r.get("mapped") else t("Unmapped"))
@@ -84,10 +85,11 @@ class TrendyolProductsView(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSortingEnabled(True)
+        # Title gets the lion's share of freed-up width; Oblio → stretches too.
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         polish_table(self.table)
-        self.table.setItemDelegateForColumn(5, PillDelegate(_status_pill, self.table))
+        self.table.setItemDelegateForColumn(4, PillDelegate(_status_pill, self.table))
         self.table.doubleClicked.connect(self._on_double_clicked)
 
         # Summary chips (same look as the Invoices tab).
@@ -171,7 +173,6 @@ class TrendyolProductsView(QWidget):
                 "id": l["id"],
                 "title": l.get("title") or "",
                 "barcode": l.get("barcode") or "",
-                "stock_code": l.get("stock_code") or "",
                 "product_main_id": l.get("product_main_id") or "",
                 "mapped": is_mapped,
                 "mapped_text": mapped_text,
@@ -280,8 +281,8 @@ class _VariantOblioPicker(QDialog):
         self.buc.setRange(1, 9999)
         self.buc.setValue(1)
         self.buc.setToolTip(
-            "Number of Oblio units that one Trendyol listing unit represents.\n"
-            "Example: a 'Pack of 100' on Trendyol → '50-pack' in Oblio with Buc=2."
+            "Câte unități Oblio reprezintă o unitate din anunțul Trendyol.\n"
+            "Exemplu: 'Pachet de 100' pe Trendyol → 'pachet de 50' în Oblio cu Buc=2."
         )
         buc_row.addWidget(self.buc)
         buc_row.addStretch(1)
@@ -290,6 +291,7 @@ class _VariantOblioPicker(QDialog):
         save = buttons.button(QDialogButtonBox.StandardButton.Save)
         save.setObjectName("primary")
         save.setText(t("Link selected"))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(t("Cancel"))
         buttons.accepted.connect(self._try_accept)
         buttons.rejected.connect(self.reject)
 

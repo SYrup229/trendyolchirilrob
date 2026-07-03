@@ -81,8 +81,8 @@ class SettingsView(QWidget):
         self.oblio_dry_run = QCheckBox(t("Dry run (don't actually POST to Oblio)"))
         self.oblio_dry_run.setChecked(repo.oblio_dry_run())
         self.oblio_dry_run.setToolTip(
-            "Logs the Oblio payload to app.log without making the HTTP call. "
-            "Use to verify what would be sent before going live."
+            "Scrie payload-ul Oblio în app.log fără a face cererea HTTP. "
+            "Folosește pentru a verifica ce s-ar trimite, înainte de a trimite efectiv."
         )
 
         save_btn = QPushButton(t("Save settings"))
@@ -130,8 +130,8 @@ class SettingsView(QWidget):
         diag_label = QLabel(t("Diagnostics"))
         diag_label.setObjectName("title")
         diag_hint = QLabel(
-            f"Trendyol API requests are logged (with credentials redacted) to this folder. "
-            f"Share <b>trendyol.log</b> when asking for help debugging an API error."
+            "Cererile către API-ul Trendyol sunt înregistrate (fără credențiale) în acest folder. "
+            "Trimite <b>trendyol.log</b> când ceri ajutor pentru o eroare de API."
         )
         diag_hint.setObjectName("subtitle")
         diag_hint.setWordWrap(True)
@@ -220,20 +220,20 @@ class SettingsView(QWidget):
         repo.set_setting("oblio_dry_run", "1" if self.oblio_dry_run.isChecked() else "0")
         if self.poll.value() != prev_poll:
             self.poll_changed.emit()
-        QMessageBox.information(self, "Saved", "Settings saved.")
+        QMessageBox.information(self, "Salvat", "Setările au fost salvate.")
 
     def _sync_oblio(self) -> None:
-        self._run_sync(lambda p: (sync_svc.sync_oblio_products(self.repo, progress=p), 0), "Syncing Oblio products…")
+        self._run_sync(lambda p: (sync_svc.sync_oblio_products(self.repo, progress=p), 0), "Sincronizare produse Oblio…")
 
     def _sync_trendyol(self) -> None:
-        self._run_sync(lambda p: (0, sync_svc.sync_trendyol_listings(self.repo, progress=p)), "Syncing Trendyol listings…")
+        self._run_sync(lambda p: (0, sync_svc.sync_trendyol_listings(self.repo, progress=p)), "Sincronizare produse Trendyol…")
 
     def _sync_both(self) -> None:
         def job(progress):
             a = sync_svc.sync_oblio_products(self.repo, progress=progress)
             b = sync_svc.sync_trendyol_listings(self.repo, progress=progress)
             return a, b
-        self._run_sync(job, "Syncing…")
+        self._run_sync(job, "Sincronizare…")
 
     def _refresh_series_from_oblio(self) -> None:
         """Fetch the user's Factura series from Oblio and populate the dropdown."""
@@ -301,10 +301,10 @@ class SettingsView(QWidget):
             else:
                 subprocess.Popen(["xdg-open", path])
         except Exception as e:
-            QMessageBox.warning(self, "Cannot open folder", f"{path}\n\n{e}")
+            QMessageBox.warning(self, "Nu pot deschide folderul", f"{path}\n\n{e}")
 
     def _run_sync(self, fn, start_msg: str) -> None:
-        dlg = BusyDialog("Syncing", start_msg, self)
+        dlg = BusyDialog("Sincronizare", start_msg, self)
         runner = TaskRunner(fn, self)
         runner.progress.connect(dlg.set_message)
 
@@ -312,15 +312,16 @@ class SettingsView(QWidget):
             dlg.accept()
             n_oblio, n_tr = result
             parts = []
-            if n_oblio: parts.append(f"{n_oblio} Oblio products")
-            if n_tr: parts.append(f"{n_tr} Trendyol listings")
-            QMessageBox.information(self, "Sync complete", "Saved " + (", ".join(parts) if parts else "0 items") + ".")
+            if n_oblio: parts.append(f"{n_oblio} produse Oblio")
+            if n_tr: parts.append(f"{n_tr} anunțuri Trendyol")
+            QMessageBox.information(self, "Sincronizare finalizată",
+                                    "Salvate: " + (", ".join(parts) if parts else "0 elemente") + ".")
             # Tell the main window the catalog has new data so it can refresh dependent views.
             self.data_synced.emit()
 
         def on_failed(msg):
             dlg.reject()
-            QMessageBox.critical(self, "Sync failed", msg)
+            QMessageBox.critical(self, "Sincronizare eșuată", msg)
 
         runner.done.connect(on_done)
         runner.failed.connect(on_failed)

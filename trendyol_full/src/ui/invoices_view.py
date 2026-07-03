@@ -496,7 +496,7 @@ class InvoicesView(QWidget):
     def _open_selected(self) -> None:
         data = self._selected_row()
         if not data:
-            QMessageBox.information(self, "Pick an invoice", "Select an invoice row first.")
+            QMessageBox.information(self, t("Pick an invoice"), t("Select an invoice row first."))
             return
         link = data.get("oblio_link")
         if link:
@@ -507,19 +507,19 @@ class InvoicesView(QWidget):
     def _export_selected(self) -> None:
         data = self._selected_row()
         if not data:
-            QMessageBox.information(self, "Pick an invoice", "Select an invoice row first.")
+            QMessageBox.information(self, t("Pick an invoice"), t("Select an invoice row first."))
             return
         default_name = suggested_filename(data)
-        path, _ = QFileDialog.getSaveFileName(self, "Export invoice", default_name, "HTML (*.html)")
+        path, _ = QFileDialog.getSaveFileName(self, t("Export invoice"), default_name, "HTML (*.html)")
         if not path:
             return
         try:
             out = export_invoice_html(self.repo, data, Path(path))
         except Exception as e:
-            QMessageBox.critical(self, "Export failed", str(e))
+            QMessageBox.critical(self, t("Export failed"), str(e))
             return
-        if QMessageBox.question(self, "Export complete",
-                                f"Saved to {out}.\nOpen it now?",
+        if QMessageBox.question(self, t("Export complete"),
+                                f"Salvat în {out}.\n" + t("Open it now?"),
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                                 ) == QMessageBox.StandardButton.Yes:
             webbrowser.open(out.as_uri())
@@ -679,9 +679,10 @@ class InvoicesView(QWidget):
 
     def _export_visible(self) -> None:
         if not self._visible_rows:
-            QMessageBox.information(self, "Nothing to export", "No invoices in the current date range.")
+            QMessageBox.information(self, t("Nothing to export"),
+                                    "Nicio factură în intervalul selectat.")
             return
-        folder = QFileDialog.getExistingDirectory(self, "Choose a folder for invoices")
+        folder = QFileDialog.getExistingDirectory(self, t("Choose a folder for invoices"))
         if not folder:
             return
         folder_p = Path(folder)
@@ -693,10 +694,10 @@ class InvoicesView(QWidget):
                 ok += 1
             except Exception as e:
                 errors.append(f"{row.get('number')}: {e}")
-        msg = f"Exported {ok} invoice(s) to {folder_p}."
+        msg = f"{ok} facturi exportate în {folder_p}."
         if errors:
-            msg += f"\n\n{len(errors)} failed:\n" + "\n".join(errors[:10])
-        QMessageBox.information(self, "Export complete", msg)
+            msg += f"\n\n{len(errors)} au eșuat:\n" + "\n".join(errors[:10])
+        QMessageBox.information(self, t("Export complete"), msg)
 
 
 class LocalInvoiceDialog(QDialog):
@@ -708,21 +709,21 @@ class LocalInvoiceDialog(QDialog):
             record = json.loads(invoice_row.get("raw_response") or "{}")
         except ValueError:
             record = {}
-        self.setWindowTitle(f"Invoice {record.get('series','')} {record.get('number','')}")
+        self.setWindowTitle(f"Factura {record.get('series','')} {record.get('number','')}")
         self.resize(960, 600)
 
         buyer = record.get("buyer") or {}
         created_at = record.get("created_at") or ""
         created_line = f"<br><b>Creat local:</b> {created_at}" if created_at else ""
         top = QLabel(
-            f"<b>Number:</b> {record.get('series','')} {record.get('number','')}<br>"
+            f"<b>Număr:</b> {record.get('series','')} {record.get('number','')}<br>"
             f"<b>Data emiterii:</b> {record.get('issue_date','')}{created_line}<br>"
-            f"<b>Order:</b> {record.get('order_number','')}  ·  "
+            f"<b>Comandă:</b> {record.get('order_number','')}  ·  "
             f"<b>Status:</b> {record.get('order_status') or '—'}<br>"
-            f"<b>Buyer:</b> {buyer.get('name','')}<br>"
+            f"<b>Client:</b> {buyer.get('name','')}<br>"
             f"<b>Email:</b> {buyer.get('email') or '—'}<br>"
-            f"<b>Address:</b> {buyer.get('address') or '—'}, {buyer.get('city') or ''} {buyer.get('country') or ''}<br>"
-            f"<b>Currency:</b> {record.get('currency','')}"
+            f"<b>Adresă:</b> {buyer.get('address') or '—'}, {buyer.get('city') or ''} {buyer.get('country') or ''}<br>"
+            f"<b>Monedă:</b> {record.get('currency','')}"
         )
         top.setTextFormat(Qt.TextFormat.RichText)
         top.setWordWrap(True)
@@ -740,8 +741,8 @@ class LocalInvoiceDialog(QDialog):
 
         table = QTableWidget(len(table_rows), 8)
         table.setHorizontalHeaderLabels([
-            "Trendyol title", "Trendyol barcode", "Oblio name", "Oblio code",
-            "Qty", "Unit price", "VAT%", "Line total",
+            "Titlu Trendyol", "Cod de bare", "Denumire Oblio", "Cod Oblio",
+            "Cant.", "Preț unitar", "TVA%", "Total linie",
         ])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -788,14 +789,15 @@ class LocalInvoiceDialog(QDialog):
                 table.setItem(row, 7, QTableWidgetItem(f"{amt:.2f}"))
 
         total_lbl = QLabel(
-            f"<b>Total (VAT incl.):</b> {record.get('total_gross') or 0:.2f} {currency}"
+            f"<b>Total (cu TVA):</b> {record.get('total_gross') or 0:.2f} {currency}"
         )
         total_lbl.setTextFormat(Qt.TextFormat.RichText)
 
-        export_btn = QPushButton("Export as HTML…")
+        export_btn = QPushButton(t("Export as HTML…"))
         export_btn.clicked.connect(self._export)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.button(QDialogButtonBox.StandardButton.Close).setText(t("Close"))
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
         buttons.addButton(export_btn, QDialogButtonBox.ButtonRole.ActionRole)
@@ -845,19 +847,20 @@ class LocalInvoiceDialog(QDialog):
     def _export(self) -> None:
         view: "InvoicesView | None" = self.parent_view if isinstance(self.parent_view, InvoicesView) else None
         if view is None:
-            QMessageBox.warning(self, "Export unavailable", "Cannot resolve repository from this dialog.")
+            QMessageBox.warning(self, "Export indisponibil",
+                                "Nu pot accesa baza de date din această fereastră.")
             return
         default_name = suggested_filename(self.invoice_row)
-        path, _ = QFileDialog.getSaveFileName(self, "Export invoice", default_name, "HTML (*.html)")
+        path, _ = QFileDialog.getSaveFileName(self, t("Export invoice"), default_name, "HTML (*.html)")
         if not path:
             return
         try:
             out = export_invoice_html(view.repo, self.invoice_row, Path(path))
         except Exception as e:
-            QMessageBox.critical(self, "Export failed", str(e))
+            QMessageBox.critical(self, t("Export failed"), str(e))
             return
-        if QMessageBox.question(self, "Export complete",
-                                f"Saved to {out}.\nOpen it now?",
+        if QMessageBox.question(self, t("Export complete"),
+                                f"Salvat în {out}.\n" + t("Open it now?"),
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                                 ) == QMessageBox.StandardButton.Yes:
             webbrowser.open(out.as_uri())

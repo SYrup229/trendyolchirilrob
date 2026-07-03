@@ -135,6 +135,9 @@ def _normalize_order(raw: dict[str, Any]) -> dict[str, Any] | None:
     customer_last = raw.get("customerLastName") or addr.get("lastName") or ""
     buyer_name = (f"{customer_first} {customer_last}").strip() or raw.get("customerEmail") or "Client Trendyol"
     return {
+        # One row per shipment package: split orders produce several packages
+        # sharing the orderNumber, each with its own status/lines/invoice.
+        "package_id": str(raw.get("id") or order_number),
         "order_number": str(order_number),
         "status": raw.get("status") or raw.get("shipmentPackageStatus") or "Unknown",
         "buyer_name": buyer_name,

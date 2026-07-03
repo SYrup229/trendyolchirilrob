@@ -114,7 +114,10 @@ CREATE INDEX IF NOT EXISTS idx_bm_oblio ON bundle_mappings(oblio_product_id);
 
 CREATE TABLE IF NOT EXISTS orders (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_number  TEXT UNIQUE NOT NULL,
+    -- One row per Trendyol SHIPMENT PACKAGE (raw $.id). Orders can be split
+    -- into several packages, each with its own status/lines/invoice.
+    package_id    TEXT NOT NULL UNIQUE,
+    order_number  TEXT NOT NULL,
     status        TEXT NOT NULL,
     buyer_name    TEXT,
     buyer_email   TEXT,
@@ -135,6 +138,7 @@ CREATE TABLE IF NOT EXISTS orders (
     tr_invoice_number       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_orders_state ON orders(invoice_state);
+CREATE INDEX IF NOT EXISTS idx_orders_number ON orders(order_number);
 
 CREATE TABLE IF NOT EXISTS invoices (
     id                       INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -249,7 +249,9 @@ class TrendyolClient:
             window_count = 0
             for raw in self.iter_orders(start_date_ms=start_ms, end_date_ms=end_ms,
                                          page_size=page_size):
-                key = str(raw.get("orderNumber") or raw.get("id") or "")
+                # Dedupe by shipment PACKAGE id — an order split into several
+                # packages must yield every package, not just the first seen.
+                key = str(raw.get("id") or raw.get("orderNumber") or "")
                 if key and key in seen_orders:
                     continue
                 if key:
