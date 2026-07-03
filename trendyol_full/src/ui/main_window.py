@@ -57,7 +57,9 @@ class MainWindow(QMainWindow):
         self.sidebar.setFixedWidth(210)
         for label in SIDEBAR_LABELS:
             self.sidebar.addItem(QListWidgetItem(label))
-        self.sidebar.setCurrentRow(TAB_TRENDYOL_PRODUCTS)
+        # Land on Invoices — the daily-work tab; the products catalog is a
+        # mapping worklist you visit when something new sold.
+        self.sidebar.setCurrentRow(TAB_INVOICES)
         layout.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
@@ -104,7 +106,7 @@ class MainWindow(QMainWindow):
         self._mapping_debounce.timeout.connect(self._run_mapping_cascade)
         self._pending_listing_ids: set[int] = set()
         self._cascade_runner: TaskRunner | None = None
-        for view in (self.mapping_view, self.bundles_view):
+        for view in (self.mapping_view, self.bundles_view, self.products_view):
             view.mappings_changed.connect(self._queue_full_cascade)
             view.listing_mapping_changed.connect(self._queue_listing_cascade)
 
@@ -114,6 +116,12 @@ class MainWindow(QMainWindow):
                                      self.bundles_view, self.invoices_view}
 
         self.products_view.pair_requested.connect(self._jump_to_mappings)
+
+        # The sidebar row was selected BEFORE the sidebar→stack connection existed,
+        # so sync the stack manually and run the initial dirty-refresh. (Previously
+        # the landing tab's first load quietly relied on the first poll tick.)
+        self.stack.setCurrentIndex(self.sidebar.currentRow())
+        self._on_view_changed(self.stack.currentIndex())
 
     # --- view lifecycle -----------------------------------------------------
 
@@ -176,7 +184,10 @@ class MainWindow(QMainWindow):
                 f"Mappings updated: regenerated {created} invoice(s) ({invalidated} replaced).",
                 5000,
             )
-        self._mark_dirty(self.invoices_view, self.products_view)
+        # Mapping edits can originate from any of the three mapping-capable tabs;
+        # mark them all (plus Invoices) so counts/status stay honest everywhere.
+        self._mark_dirty(self.invoices_view, self.products_view,
+                         self.mapping_view, self.bundles_view)
 
     def _on_cascade_failed(self, msg: str) -> None:
         self.status.showMessage(f"Mapping update error: {msg}", 8000)

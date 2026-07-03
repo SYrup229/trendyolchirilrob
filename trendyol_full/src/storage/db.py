@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS trendyol_listings (
 );
 CREATE INDEX IF NOT EXISTS idx_trendyol_listings_barcode ON trendyol_listings(barcode);
 CREATE INDEX IF NOT EXISTS idx_trendyol_listings_stockcode ON trendyol_listings(stock_code);
+CREATE INDEX IF NOT EXISTS idx_trendyol_listings_pmid ON trendyol_listings(product_main_id);
 CREATE INDEX IF NOT EXISTS idx_trendyol_listings_title ON trendyol_listings(title);
 
 -- "Variant" mapping: one Oblio product is sold as several Trendyol listings
@@ -148,8 +149,13 @@ CREATE TABLE IF NOT EXISTS invoices (
     raw_response             TEXT NOT NULL,
     last_send_error          TEXT,
     trendyol_link_sent_at    TEXT,
-    trendyol_link_error      TEXT
+    trendyol_link_error      TEXT,
+    -- Fingerprint of the inputs this LOCAL draft was built from
+    -- ("builderRev:mappingsRev:orderFetchedAt"); lets the poller skip drafts
+    -- whose inputs didn't change. NULL forces a rebuild.
+    build_sig                TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(number);
 """
 
 

@@ -4,10 +4,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QTableView, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMenu, QMessageBox, QPushButton,
+    QStackedLayout, QTableView, QTableWidget, QTableWidgetItem, QToolButton,
+    QVBoxLayout, QWidget,
 )
 
 from src.i18n import t
@@ -16,6 +18,10 @@ from src.services.invoice_export import export_invoice_html, suggested_filename
 from src.services.invoicing import notify_trendyol_of_invoice, send_local_invoice_to_oblio
 from src.storage.repo import Repo
 from src.ui.models import DictRowsModel
+from src.ui.widgets import (
+    PILL_AMBER, PILL_BLUE, PILL_GREEN, PILL_GREY, PILL_INDIGO, PILL_RED, PillDelegate,
+    polish_table,
+)
 
 
 # (label, days from "now", or None for all-time)
@@ -27,6 +33,35 @@ DATE_RANGES: list[tuple[str, int | None]] = [
     (t("Last 1 year"), 365),
     (t("All time"), None),
 ]
+
+
+def _status_pill(row: dict) -> tuple[str, str, str] | None:
+    s = (row.get("order_status") or "").strip()
+    if not s:
+        return None
+    if s == "Delivered":
+        return (s, *PILL_BLUE)
+    if s == "Shipped":
+        return (s, *PILL_GREEN)
+    return (s, *PILL_GREY)
+
+
+def _source_pill(row: dict) -> tuple[str, str, str] | None:
+    if row.get("oblio_link"):
+        return ("Oblio", *PILL_INDIGO)
+    return ("Local", *PILL_GREY)
+
+
+def _notify_pill(row: dict) -> tuple[str, str, str] | None:
+    sent_at = (row.get("trendyol_link_sent_at") or "").strip()
+    err = (row.get("trendyol_link_error") or "").strip()
+    if sent_at:
+        return ("✓ " + sent_at[:10], *PILL_GREEN)
+    if err:
+        return ("eroare", *PILL_RED)
+    if row.get("oblio_link"):
+        return ("în așteptare", *PILL_AMBER)
+    return None
 
 
 class _InvoicesModel(DictRowsModel):
@@ -157,6 +192,13 @@ class InvoicesView(QWidget):
                 return (r.get("order_date") or "")[:10]  # YYYY-MM-DD only
             return None
 
+        def _issued_at(r, role):
+            if role == Qt.ItemDataRole.DisplayRole:
+                return (r.get("issued_at") or "")[:16]  # date + hh:mm, no seconds
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return r.get("issued_at") or None
+            return None
+
         def _status(r, role):
             s = (r.get("order_status") or "—").strip()
             if role == Qt.ItemDataRole.DisplayRole:
@@ -181,11 +223,8 @@ class InvoicesView(QWidget):
             return None
 
         def _trendyol_notify_status(r, role):
-            # Combines two cases:
-            #   - trendyol_link_sent_at set → "✓ Trendyol notified"
-            #   - error stamped → show first 80 chars of error
-            #   - neither, but oblio_link exists → "Pending"
-            #   - oblio_link missing → blank (we haven't even sent to Oblio)
+            # Rendered as a pill by PillDelegate; this fn only supplies the
+            # tooltip (full error text) + plain-text fallback for sorting.
             sent_at = (r.get("trendyol_link_sent_at") or "").strip()
             err = (r.get("trendyol_link_error") or "").strip()
             oblio = r.get("oblio_link") or ""
@@ -199,13 +238,16 @@ class InvoicesView(QWidget):
                 return ""
             if role == Qt.ItemDataRole.ToolTipRole:
                 return err or sent_at or None
-            if role == Qt.ItemDataRole.ForegroundRole:
-                if err:
-                    return Qt.GlobalColor.red
-                if sent_at:
-                    return Qt.GlobalColor.green
-                if oblio:
-                    return Qt.GlobalColor.yellow
+            return None
+
+        def _link(r, role):
+            link = (r.get("oblio_link") or "").strip()
+            if role == Qt.ItemDataRole.DisplayRole:
+                return "deschide ↗" if link else ""
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return link or None
+            if role == Qt.ItemDataRole.ForegroundRole and link:
+                return QColor("#7dd3fc")
             return None
 
         self._model = _InvoicesModel(columns=[
@@ -220,10 +262,10 @@ class InvoicesView(QWidget):
             (t("Status"),       _status),
             (t("Buyer"),        _txt("buyer_name")),
             (t("Total"),        _total),
-            (t("Issued locally"),     _txt("issued_at")),
+            (t("Issued locally"),     _issued_at),
             (t("Last error"),         _last_err),
             (t("Trendyol notify"),    _trendyol_notify_status),
-            (t("Link"),         _txt("oblio_link")),
+            (t("Link"),         _link),
         ])
         self.table = QTableView()
         self.table.setModel(self._model)
@@ -237,17 +279,24 @@ class InvoicesView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         self.table.setColumnHidden(0, True)  # hidden until "send multiple" mode is entered
         self.table.doubleClicked.connect(self._on_double_clicked)
-        self.table.verticalHeader().setDefaultSectionSize(22)
+        polish_table(self.table)
+        # Badge rendering for the state-ish columns.
+        self.table.setItemDelegateForColumn(1, PillDelegate(_source_pill, self.table))
+        self.table.setItemDelegateForColumn(6, PillDelegate(_status_pill, self.table))
+        self.table.setItemDelegateForColumn(11, PillDelegate(_notify_pill, self.table))
         self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
-        refresh_btn = QPushButton(t("Refresh"))
+        refresh_btn = QPushButton("⟳  " + t("Refresh"))
         refresh_btn.clicked.connect(self.refresh)
 
-        self.export_btn = QPushButton(t("Export selected…"))
-        self.export_btn.clicked.connect(self._export_selected)
-
-        self.export_all_btn = QPushButton(t("Export visible to folder…"))
-        self.export_all_btn.clicked.connect(self._export_visible)
+        # Two export actions folded into one dropdown to unclutter the button row.
+        self.export_menu_btn = QToolButton()
+        self.export_menu_btn.setText(t("Export") + "  ▾")
+        self.export_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        export_menu = QMenu(self)
+        export_menu.addAction(t("Export selected…"), self._export_selected)
+        export_menu.addAction(t("Export visible to folder…"), self._export_visible)
+        self.export_menu_btn.setMenu(export_menu)
 
         self.send_btn = QPushButton(t("Send to Oblio"))
         self.send_btn.setObjectName("primary")
@@ -273,8 +322,9 @@ class InvoicesView(QWidget):
 
         # Multi-select flow: entry button, plus the green Send / red Cancel pair
         # that swaps in once the user enters "pick mode".
+        # Secondary styling on purpose — "Trimite la Oblio" is THE primary action;
+        # two filled-blue buttons next to each other read as equal weight.
         self.send_multi_btn = QPushButton(t("Send out multiple invoices"))
-        self.send_multi_btn.setObjectName("primary")
         self.send_multi_btn.clicked.connect(self._enter_multi_mode)
 
         self.multi_send_btn = QPushButton(t("Send"))
@@ -292,8 +342,7 @@ class InvoicesView(QWidget):
         buttons_row = QHBoxLayout()
         buttons_row.addWidget(refresh_btn)
         buttons_row.addStretch(1)
-        buttons_row.addWidget(self.export_all_btn)
-        buttons_row.addWidget(self.export_btn)
+        buttons_row.addWidget(self.export_menu_btn)
         buttons_row.addWidget(self.open_btn)
         buttons_row.addWidget(self.renotify_btn)
         buttons_row.addWidget(self.resend_btn)
@@ -308,16 +357,38 @@ class InvoicesView(QWidget):
         self.multi_send_btn.setVisible(False)
         self.multi_cancel_btn.setVisible(False)
 
-        self.summary = QLabel("")
-        self.summary.setObjectName("subtitle")
+        # Summary chips: shown / unsent / sent / hidden counts at a glance.
+        def _chip(role: str) -> QLabel:
+            lbl = QLabel("")
+            lbl.setObjectName("chip")
+            lbl.setProperty("chipRole", role)
+            return lbl
+
+        self.chip_shown = _chip("neutral")
+        self.chip_unsent = _chip("warn")
+        self.chip_sent = _chip("ok")
+        self.chip_hidden = _chip("muted")
+        chips_row = QHBoxLayout()
+        chips_row.setSpacing(6)
+        for c in (self.chip_shown, self.chip_unsent, self.chip_sent, self.chip_hidden):
+            chips_row.addWidget(c)
+        chips_row.addStretch(1)
+
+        # Empty state swapped in when the current filters match nothing.
+        self.empty_label = QLabel("")
+        self.empty_label.setObjectName("emptyState")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._table_stack = QStackedLayout()
+        self._table_stack.addWidget(self.table)       # index 0
+        self._table_stack.addWidget(self.empty_label)  # index 1
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addLayout(filter_row)
-        layout.addWidget(self.summary)
-        layout.addWidget(self.table, 1)
+        layout.addLayout(chips_row)
+        layout.addLayout(self._table_stack, 1)
         layout.addLayout(buttons_row)
 
         self._all_rows: list[dict] = []
@@ -372,11 +443,38 @@ class InvoicesView(QWidget):
             1 for r in self._all_rows
             if is_invoiceable(r) and not not_externally_invoiced(r)
         )
-        self.summary.setText(
-            f"{len(rows)} invoice(s) shown · {len(self._all_rows)} total · "
-            f"{hidden_off_status} hidden (not Shipped/Delivered) · "
-            f"{hidden_external} hidden (externally invoiced)"
+        n_sent = sum(1 for r in rows if (r.get("oblio_link") or "").strip())
+        n_unsent = len(rows) - n_sent
+        hidden_by_sent_filter = sum(
+            1 for r in self._all_rows
+            if in_range(r) and is_invoiceable(r) and not_externally_invoiced(r)
+            and not passes_sent_filter(r)
         )
+        hidden_total = hidden_off_status + hidden_external + hidden_by_sent_filter
+
+        self.chip_shown.setText(f"{len(rows)} afișate")
+        self.chip_unsent.setText(f"{n_unsent} de trimis")
+        self.chip_unsent.setVisible(n_unsent > 0)
+        self.chip_sent.setText(f"{n_sent} trimise")
+        self.chip_sent.setVisible(n_sent > 0)
+        self.chip_hidden.setText(f"{hidden_total} ascunse")
+        self.chip_hidden.setVisible(hidden_total > 0)
+        self.chip_hidden.setToolTip(
+            f"{hidden_off_status} — status diferit de Shipped/Delivered\n"
+            f"{hidden_external} — facturate extern (link deja pe Trendyol)\n"
+            f"{hidden_by_sent_filter} — deja trimise (filtrul de mai sus)"
+        )
+
+        if rows:
+            self._table_stack.setCurrentIndex(0)
+        else:
+            self.empty_label.setText(
+                "Toate facturile din perioadă au fost trimise ✓"
+                if self.hide_sent_chk.isChecked() and n_sent == 0 and hidden_by_sent_filter > 0
+                else "Nicio factură de afișat pentru filtrele curente."
+            )
+            self._table_stack.setCurrentIndex(1)
+
         self._model.set_rows(rows)
         # Model reset drops the selection; the resend button is selection-driven.
         self.resend_btn.setVisible(False)
@@ -546,7 +644,7 @@ class InvoicesView(QWidget):
         # In multi-mode only the green Send + red Cancel are visible; everything
         # else hides so the user can't accidentally trigger a single-row action
         # while picking checkboxes.
-        for w in (self.export_all_btn, self.export_btn, self.open_btn,
+        for w in (self.export_menu_btn, self.open_btn,
                   self.renotify_btn, self.send_all_btn, self.send_btn,
                   self.send_multi_btn):
             w.setVisible(not multi)
@@ -695,7 +793,6 @@ class LocalInvoiceDialog(QDialog):
         total_lbl.setTextFormat(Qt.TextFormat.RichText)
 
         export_btn = QPushButton("Export as HTML…")
-        export_btn.setObjectName("primary")
         export_btn.clicked.connect(self._export)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -703,11 +800,47 @@ class LocalInvoiceDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.addButton(export_btn, QDialogButtonBox.ButtonRole.ActionRole)
 
+        # Review-then-send: the dialog only opens for unsent drafts (sent invoices
+        # open their Oblio link in the browser instead), so the send action is
+        # always applicable — but keep the guard in case a caller changes.
+        if not (invoice_row.get("oblio_link") or "").strip() and isinstance(parent, InvoicesView):
+            send_btn = QPushButton(t("Send to Oblio"))
+            send_btn.setObjectName("primary")
+            send_btn.clicked.connect(self._send)
+            buttons.addButton(send_btn, QDialogButtonBox.ButtonRole.ActionRole)
+
         layout = QVBoxLayout(self)
         layout.addWidget(top)
         layout.addWidget(table, 1)
         layout.addWidget(total_lbl)
         layout.addWidget(buttons)
+
+    def _send(self) -> None:
+        view: "InvoicesView | None" = self.parent_view if isinstance(self.parent_view, InvoicesView) else None
+        if view is None:
+            return
+        repo = view.repo
+        dry = repo.oblio_dry_run()
+        try:
+            send_local_invoice_to_oblio(repo, self.invoice_row["id"], dry_run=dry)
+        except Exception as e:
+            # Keep the dialog open — the lines are right here for figuring out
+            # what Oblio disliked. The error is also stamped on the row.
+            QMessageBox.critical(self, "Trimitere eșuată", str(e))
+            view.refresh()
+            return
+        if dry:
+            QMessageBox.information(self, "DRY-RUN",
+                                    "Payload-ul a fost doar logat — nimic trimis (Dry run activ).")
+            return
+        fresh = repo.get_invoice(self.invoice_row["id"]) or {}
+        QMessageBox.information(
+            self, "Factură emisă",
+            f"Factură emisă: {fresh.get('series') or ''} {fresh.get('number') or ''}.\n"
+            "Link-ul a fost trimis către Trendyol (vezi coloana Notificare Trendyol).",
+        )
+        view.refresh()
+        self.accept()
 
     def _export(self) -> None:
         view: "InvoicesView | None" = self.parent_view if isinstance(self.parent_view, InvoicesView) else None

@@ -14,6 +14,15 @@ from src.storage.repo import Repo
 # Backwards-compat re-export — older callers and tests imported this constant.
 INVOICEABLE_STATUSES = INVOICEABLE_TRENDYOL_STATUSES
 
+# Bump when invoice-BUILDING logic changes (VAT maps, series maps, price split,
+# payload shape…). Any unsent draft whose build_sig carries an older rev gets
+# rebuilt on the next poller tick; matching drafts are skipped entirely.
+BUILDER_REV = "1"
+
+
+def _build_sig(repo: Repo, order_fetched_at: str | None) -> str:
+    return f"{BUILDER_REV}:{repo.mappings_rev()}:{order_fetched_at or ''}"
+
 
 # Destination-country → invoice VAT rate. Applied to lines whose Oblio product
 # has no VAT stored (bundles, or products imported before Oblio's cotaTVA was
@@ -310,18 +319,22 @@ def auto_create_local_invoices(repo: Repo) -> tuple[int, int]:
 
 def refresh_local_drafts(repo: Repo) -> int:
     """
-    Rebuild raw_response + total for every LOCAL draft (no oblio_link) from the
-    current order + code. Used so that changes to invoice-building logic (e.g.
-    a new country → VAT map) become visible on drafts that were created BEFORE
-    the change, without needing to delete-and-recreate. Only drafts change; rows
-    already sent to Oblio are frozen.
+    Rebuild raw_response + total for LOCAL drafts (no oblio_link) whose inputs
+    changed since they were built — order content updated, mappings edited, or
+    the builder logic itself revised (BUILDER_REV). Unchanged drafts are skipped
+    via a pure-SQL build_sig comparison, so the steady-state cost per poll tick
+    is one indexed query, not N× build_preview.
+    Rows already sent to Oblio are never touched.
     Returns the number of drafts actually rewritten.
     """
     log = get_app_logger()
+    mappings_rev = repo.mappings_rev()
+    stale = repo.list_stale_drafts(BUILDER_REV, mappings_rev)
+    if not stale:
+        return 0
+    log.info("refresh-local-drafts: %d stale draft(s) to rebuild", len(stale))
     refreshed = 0
-    for inv in repo.list_invoices():
-        if (inv.get("oblio_link") or "").strip():
-            continue
+    for inv in stale:
         try:
             preview = build_preview(repo, inv["order_id"])
         except Exception as e:
@@ -347,6 +360,7 @@ def refresh_local_drafts(repo: Repo) -> int:
             total=preview.total_gross,
             currency=preview.currency,
             raw_response=record,
+            build_sig=_build_sig(repo, inv.get("order_fetched_at")),
         ):
             refreshed += 1
     return refreshed
@@ -360,6 +374,7 @@ def _save_local_invoice(repo: Repo, preview: InvoicePreview) -> None:
     # falls back to "today" for legacy orders that never recorded a date.
     issue_dt = _issue_date_for(preview) or now
     invoice_record = _local_invoice_record(preview, series, number, issue_dt, now)
+    order_row = repo.get_order(preview.order_id) or {}
     repo.record_invoice(
         order_id=preview.order_id,
         series=series,
@@ -369,6 +384,7 @@ def _save_local_invoice(repo: Repo, preview: InvoicePreview) -> None:
         oblio_link=None,
         einvoice_link=None,
         raw_response=invoice_record,
+        build_sig=_build_sig(repo, order_row.get("fetched_at")),
     )
 
 
@@ -391,8 +407,7 @@ def _issue_date_for(preview: InvoicePreview) -> datetime | None:
 
 def _next_local_number(repo: Repo, now: datetime) -> str:
     date_part = now.strftime("%Y%m%d")
-    existing = [i for i in repo.list_invoices() if (i.get("number") or "").startswith(f"LOC-{date_part}-")]
-    seq = len(existing) + 1
+    seq = repo.next_local_invoice_seq(date_part)
     return f"LOC-{date_part}-{seq:04d}"
 
 

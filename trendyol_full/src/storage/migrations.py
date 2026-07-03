@@ -189,6 +189,25 @@ def _007_order_invoice_link(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE orders ADD COLUMN tr_invoice_number TEXT")
 
 
+def _008_perf(conn: sqlite3.Connection) -> None:
+    """Performance pass:
+      - invoices.build_sig: fingerprint of the inputs a LOCAL draft was built from
+        (builder rev : mappings rev : order fetched_at). Lets the poller skip
+        rebuilding drafts whose inputs didn't change instead of rebuilding all of
+        them every tick.
+      - idx_trendyol_listings_pmid: resolve_line_mappings queries product_main_id
+        FIRST for every invoice line; it was the only lookup key without an index.
+      - idx_invoices_number: next-local-number generation does a LIKE 'LOC-date-%'
+        prefix scan.
+    """
+    if not _has_column(conn, "invoices", "build_sig"):
+        conn.execute("ALTER TABLE invoices ADD COLUMN build_sig TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trendyol_listings_pmid ON trendyol_listings(product_main_id)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(number)")
+
+
 MIGRATIONS: list[Migration] = [
     ("001_oblio_id", _001_oblio_id),
     ("002_units_per_listing", _002_units_per_listing),
@@ -197,6 +216,7 @@ MIGRATIONS: list[Migration] = [
     ("005_split_mappings", _005_split_mappings),
     ("006_trendyol_invoice_link", _006_trendyol_invoice_link),
     ("007_order_invoice_link", _007_order_invoice_link),
+    ("008_perf", _008_perf),
 ]
 
 

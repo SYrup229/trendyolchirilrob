@@ -285,6 +285,19 @@ class Repo:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    @staticmethod
+    def _bump_mappings_rev(conn) -> None:
+        """Increment the mappings revision counter (a settings row). The invoice
+        draft-refresh includes this in each draft's build_sig, so bumping it here
+        marks every unsent draft stale exactly once per mapping change."""
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES('mappings_rev', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)"
+        )
+
+    def mappings_rev(self) -> str:
+        return self.get_setting("mappings_rev", "0")
+
     def add_variant_mappings(self, oblio_product_id: int, trendyol_listing_ids: Iterable[int],
                               units_per_listing: int = 1) -> int:
         """One Oblio + many Trendyol listings.
@@ -311,17 +324,20 @@ class Repo:
                         (oblio_product_id, units, lid),
                     )
                 added += 1
+            self._bump_mappings_rev(conn)
         return added
 
     def remove_variant_mapping(self, mapping_id: int) -> None:
         with tx() as conn:
             conn.execute("DELETE FROM variant_mappings WHERE id = ?", (mapping_id,))
+            self._bump_mappings_rev(conn)
 
     def update_variant_units(self, mapping_id: int, units_per_listing: int) -> None:
         units = max(1, int(units_per_listing or 1))
         with tx() as conn:
             conn.execute("UPDATE variant_mappings SET units_per_listing = ? WHERE id = ?",
                          (units, mapping_id))
+            self._bump_mappings_rev(conn)
 
     def count_variants_per_oblio(self) -> dict[int, int]:
         rows = get_conn().execute(
@@ -363,17 +379,20 @@ class Repo:
                         (units, trendyol_listing_id, oid),
                     )
                 added += 1
+            self._bump_mappings_rev(conn)
         return added
 
     def remove_bundle_component(self, mapping_id: int) -> None:
         with tx() as conn:
             conn.execute("DELETE FROM bundle_mappings WHERE id = ?", (mapping_id,))
+            self._bump_mappings_rev(conn)
 
     def update_bundle_units(self, mapping_id: int, units_per_listing: int) -> None:
         units = max(1, int(units_per_listing or 1))
         with tx() as conn:
             conn.execute("UPDATE bundle_mappings SET units_per_listing = ? WHERE id = ?",
                          (units, mapping_id))
+            self._bump_mappings_rev(conn)
 
     def count_components_per_listing(self) -> dict[int, int]:
         rows = get_conn().execute(
@@ -406,6 +425,7 @@ class Repo:
             n_b = conn.execute("SELECT COUNT(*) FROM bundle_mappings").fetchone()[0]
             conn.execute("DELETE FROM variant_mappings")
             conn.execute("DELETE FROM bundle_mappings")
+            self._bump_mappings_rev(conn)
             return n_v + n_b
 
     # Placeholder values Trendyol fills in when a seller didn't provide a real SKU — these
@@ -473,6 +493,14 @@ class Repo:
 
     # ---------- orders ----------
     def upsert_order(self, order: dict[str, Any]) -> int:
+        """
+        Insert or update an order. The DO UPDATE is guarded by a WHERE that skips
+        the write when the payload is byte-identical — so `fetched_at` means
+        "when the order's content last CHANGED", not "when we last polled".
+        The invoice draft-refresh uses that timestamp to skip untouched orders.
+        (raw_json alone is a sufficient change proxy: every other stored column
+        is derived from it.)
+        """
         now = _now()
         with tx() as conn:
             cur = conn.execute(
@@ -488,6 +516,7 @@ class Repo:
                 "    tr_invoice_link = excluded.tr_invoice_link, "
                 "    tr_invoice_link_date_ms = excluded.tr_invoice_link_date_ms, "
                 "    tr_invoice_number = excluded.tr_invoice_number "
+                "WHERE orders.raw_json IS NOT excluded.raw_json "
                 "RETURNING id",
                 (
                     order["order_number"],
@@ -507,7 +536,15 @@ class Repo:
                     order.get("tr_invoice_number"),
                 ),
             )
-            return cur.fetchone()[0]
+            row = cur.fetchone()
+            if row is not None:
+                return row[0]
+            # Conflict + unchanged payload → the guarded UPDATE was skipped and
+            # RETURNING produced no row; the order already exists untouched.
+            existing = conn.execute(
+                "SELECT id FROM orders WHERE order_number = ?", (order["order_number"],)
+            ).fetchone()
+            return existing[0]
 
     def list_orders(self, state: str | None = None) -> list[dict[str, Any]]:
         q = "SELECT * FROM orders"
@@ -529,14 +566,14 @@ class Repo:
     # ---------- invoices ----------
     def record_invoice(self, order_id: int, series: str, number: str, total: float | None,
                        currency: str | None, oblio_link: str | None, einvoice_link: str | None,
-                       raw_response: dict[str, Any]) -> int:
+                       raw_response: dict[str, Any], build_sig: str | None = None) -> int:
         now = _now()
         with tx() as conn:
             cur = conn.execute(
-                "INSERT INTO invoices(order_id, series, number, oblio_link, oblio_einvoice_link, total, currency, issued_at, raw_response) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                "INSERT INTO invoices(order_id, series, number, oblio_link, oblio_einvoice_link, total, currency, issued_at, raw_response, build_sig) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
                 (order_id, series, number, oblio_link, einvoice_link, total, currency, now,
-                 json.dumps(raw_response, ensure_ascii=False)),
+                 json.dumps(raw_response, ensure_ascii=False), build_sig),
             )
             invoice_id = cur.fetchone()[0]
             conn.execute(
@@ -552,6 +589,7 @@ class Repo:
         total: float | None,
         currency: str | None,
         raw_response: dict[str, Any],
+        build_sig: str | None = None,
     ) -> bool:
         """
         Overwrite the series/total/currency/raw_response of a LOCAL draft (no
@@ -561,11 +599,39 @@ class Repo:
         """
         with tx() as conn:
             cur = conn.execute(
-                "UPDATE invoices SET series = ?, total = ?, currency = ?, raw_response = ? "
+                "UPDATE invoices SET series = ?, total = ?, currency = ?, raw_response = ?, "
+                "build_sig = ? "
                 "WHERE id = ? AND (oblio_link IS NULL OR oblio_link = '')",
-                (series, total, currency, json.dumps(raw_response, ensure_ascii=False), invoice_id),
+                (series, total, currency, json.dumps(raw_response, ensure_ascii=False),
+                 build_sig, invoice_id),
             )
             return cur.rowcount > 0
+
+    def list_stale_drafts(self, builder_rev: str, mappings_rev: str) -> list[dict[str, Any]]:
+        """
+        Unsent drafts whose build_sig no longer matches the current inputs
+        (builder revision, mappings revision, or the order's content timestamp).
+        The comparison runs entirely in SQL so unchanged drafts cost nothing —
+        no JSON parsing, no preview rebuild.
+        """
+        q = (
+            "SELECT i.id, i.series, i.number, i.order_id, o.fetched_at AS order_fetched_at "
+            "FROM invoices i JOIN orders o ON o.id = i.order_id "
+            "WHERE (i.oblio_link IS NULL OR i.oblio_link = '') "
+            "  AND (i.build_sig IS NULL "
+            "       OR i.build_sig != (? || ':' || ? || ':' || o.fetched_at))"
+        )
+        return [dict(r) for r in get_conn().execute(q, (builder_rev, mappings_rev)).fetchall()]
+
+    def next_local_invoice_seq(self, date_part: str) -> int:
+        """Next sequence number for LOC-<date>- local invoice numbers. MAX-based so
+        deleting drafts can never reissue a previously-used number the same day."""
+        prefix = f"LOC-{date_part}-"
+        row = get_conn().execute(
+            "SELECT MAX(CAST(substr(number, ?) AS INTEGER)) FROM invoices WHERE number LIKE ?",
+            (len(prefix) + 1, prefix + "%"),
+        ).fetchone()
+        return int(row[0] or 0) + 1
 
     def update_invoice_oblio_response(
         self,

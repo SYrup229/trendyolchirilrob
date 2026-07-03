@@ -31,6 +31,7 @@ RO: dict[str, str] = {
     "Open invoice": "Deschide factura",
     "Open log folder": "Deschide folderul de log-uri",
     "Open it now?": "Deschide acum?",
+    "Export": "Exportă",
     "Export selected…": "Exportă selecția…",
     "Export visible to folder…": "Exportă vizibilele în folder…",
     "Export as HTML…": "Exportă ca HTML…",
@@ -82,11 +83,19 @@ RO: dict[str, str] = {
     "API secret (Secret API)": "Secret API",
 
     # ---- Trendyol products tab ----
-    "Every listing the app has seen in your Trendyol order history. Click a product → opens Mappings.":
-        "Toate anunțurile întâlnite în istoricul comenzilor Trendyol. Click pe un produs → deschide Mapări.",
+    "Every listing from your order history, with its mapping status. "
+    "New products appear after their first sale — map them here directly.":
+        "Toate anunțurile din istoricul comenzilor, cu statusul lor de asociere. "
+        "Produsele noi apar după prima vânzare — asociază-le direct de aici.",
     "Filter by title, barcode, stock code or product code…": "Filtrează după titlu, cod de bare, stock code sau cod produs…",
     "Mapped": "Asociat",
     "Unmapped": "Neasociat",
+    "Map as variant…": "Asociază ca variantă…",
+    "Convert to bundle…": "Transformă în pachet…",
+    "Select a Trendyol listing first.": "Selectează mai întâi un anunț Trendyol.",
+    "Which Oblio product is this listing?": "Ce produs Oblio este acest anunț?",
+    "Pick a product": "Alege un produs",
+    "Select an Oblio product first.": "Selectează mai întâi un produs Oblio.",
 
     # ---- Mappings tab ----
     "Pick an Oblio product, then connect one or more Trendyol listings to it. "

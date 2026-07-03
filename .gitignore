@@ -18,6 +18,9 @@ trendyol_full/*LOC-*.html
 # Sample / scratch data
 *.xlsx
 
+# Local pre-refactor safety copy
+backup/
+
 # Editor
 .vscode/
 .idea/

@@ -9,13 +9,16 @@ Add button: opens an Oblio-picker dialog (search + checkbox multi-select + Buc i
 from PySide6.QtCore import QModelIndex, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter, QTableView,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedLayout,
+    QTableView, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from src.i18n import t
 from src.storage.repo import Repo
 from src.ui.models import DictRowsModel
+from src.ui.widgets import (
+    PILL_GREEN, PILL_GREY, PillDelegate, attach_search_debounce, polish_table,
+)
 
 
 class BundlesView(QWidget):
@@ -40,16 +43,29 @@ class BundlesView(QWidget):
         self.search.setPlaceholderText(t("Search Trendyol listings…"))
         self.search.textChanged.connect(self._on_search_changed)
 
+        self.only_bundles_chk = QCheckBox("Doar pachetele (cu componente)")
+        self.only_bundles_chk.toggled.connect(lambda _: self.refresh())
+        self.count_label = QLabel("")
+        self.count_label.setObjectName("subtitle")
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(self.only_bundles_chk)
+        filter_row.addStretch(1)
+        filter_row.addWidget(self.count_label)
+
         def _txt(key):
             return lambda r, role: r.get(key, "") if role == Qt.ItemDataRole.DisplayRole else None
 
         def _components(r, role):
-            n = r.get("components_count", 0)
+            # Rendered as a pill; plain text kept for sorting.
             if role == Qt.ItemDataRole.DisplayRole:
-                return str(n)
-            if role == Qt.ItemDataRole.ForegroundRole and not n:
-                return Qt.GlobalColor.gray
+                return str(r.get("components_count", 0))
             return None
+
+        def _components_pill(row: dict) -> tuple[str, str, str] | None:
+            n = row.get("components_count", 0)
+            if n:
+                return (f"{n} componente" if n > 1 else "1 componentă", *PILL_GREEN)
+            return ("—", *PILL_GREY)
 
         self._listings_model = DictRowsModel(columns=[
             (t("Title"),         _txt("title")),
@@ -69,7 +85,9 @@ class BundlesView(QWidget):
         self.listings_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.listings_table.setSortingEnabled(True)
         self.listings_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.listings_table.verticalHeader().setDefaultSectionSize(22)
+        polish_table(self.listings_table)
+        self.listings_table.setItemDelegateForColumn(
+            3, PillDelegate(_components_pill, self.listings_table))
         self.listings_table.selectionModel().selectionChanged.connect(self._reload_components_for_selected)
 
         # ---- right pane: components ----
@@ -81,6 +99,10 @@ class BundlesView(QWidget):
         self.components_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.components_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.components_table.setColumnWidth(2, 80)
+        self.components_table.setAlternatingRowColors(True)
+        self.components_table.setShowGrid(False)
+        self.components_table.verticalHeader().setVisible(False)
+        self.components_table.verticalHeader().setDefaultSectionSize(34)
 
         self.selected_label = QLabel(t("Select a Trendyol listing on the left."))
         self.selected_label.setObjectName("subtitle")
@@ -89,6 +111,15 @@ class BundlesView(QWidget):
         add_btn.setObjectName("primary")
         add_btn.clicked.connect(self._open_add_dialog)
 
+        # Right-pane empty state (no selection / not a bundle yet).
+        self.right_empty = QLabel("")
+        self.right_empty.setObjectName("emptyState")
+        self.right_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.right_empty.setWordWrap(True)
+        self._right_stack = QStackedLayout()
+        self._right_stack.addWidget(self.components_table)  # 0
+        self._right_stack.addWidget(self.right_empty)       # 1
+
         # ---- layout ----
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -96,6 +127,7 @@ class BundlesView(QWidget):
         left_layout.addWidget(title)
         left_layout.addWidget(subtitle)
         left_layout.addWidget(self.search)
+        left_layout.addLayout(filter_row)
         left_layout.addWidget(self.listings_table, 1)
 
         right = QWidget()
@@ -103,7 +135,7 @@ class BundlesView(QWidget):
         right_layout.setContentsMargins(8, 12, 16, 12)
         right_layout.addWidget(self.selected_label)
         right_layout.addWidget(add_btn)
-        right_layout.addWidget(self.components_table, 1)
+        right_layout.addLayout(self._right_stack, 1)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(left)
@@ -121,17 +153,25 @@ class BundlesView(QWidget):
     def refresh(self) -> None:
         self._listings_cache = self.repo.list_trendyol_listings()
         counts = self.repo.count_components_per_listing()
+        only_bundles = self.only_bundles_chk.isChecked()
         rows = []
         for l in self._listings_cache:
+            n = counts.get(l["id"], 0)
+            if only_bundles and not n:
+                continue
             rows.append({
                 "id": l["id"],
                 "title": l.get("title") or "",
                 "barcode": l.get("barcode") or "",
                 "product_main_id": l.get("product_main_id") or "",
-                "components_count": counts.get(l["id"], 0),
+                "components_count": n,
             })
         self._listings_model.set_rows(rows)
         self._listings_proxy.setFilterFixedString(self.search.text().strip())
+        n_bundles = sum(1 for c in counts.values() if c)
+        self.count_label.setText(
+            f"{len(self._listings_cache)} anunțuri · {n_bundles} pachete"
+        )
         self._reload_components_for_selected()
 
     def _on_search_changed(self, text: str) -> None:
@@ -155,9 +195,19 @@ class BundlesView(QWidget):
         if not listing:
             self.components_table.setRowCount(0)
             self.selected_label.setText(t("Select a Trendyol listing on the left."))
+            self.right_empty.setText("Selectează un anunț Trendyol din stânga\npentru a-i vedea componentele.")
+            self._right_stack.setCurrentIndex(1)
             return
         self.selected_label.setText(t("Components for: ") + (listing.get("title") or ""))
         comps = self.repo.get_bundle_components(listing["id"])
+        if not comps:
+            self.right_empty.setText(
+                "Acest anunț nu e (încă) un pachet.\n"
+                "Apasă „Adaugă componentă Oblio…” pentru a-l transforma în pachet."
+            )
+            self._right_stack.setCurrentIndex(1)
+            return
+        self._right_stack.setCurrentIndex(0)
         self.components_table.setRowCount(len(comps))
         for row, c in enumerate(comps):
             name = c.get("oblio_name") or ""
@@ -222,7 +272,7 @@ class _OblioPickerDialog(QDialog):
 
         self.search = QLineEdit()
         self.search.setPlaceholderText(t("Search Oblio products…"))
-        self.search.textChanged.connect(self._reload)
+        attach_search_debounce(self.search, self._reload)
 
         self.selection_label = QLabel("")
         self.selection_label.setObjectName("subtitle")
@@ -232,6 +282,13 @@ class _OblioPickerDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.setColumnWidth(0, 36)
+        # Native checkable items (below) instead of per-cell QCheckBox widgets —
+        # thousands of embedded widgets per reload made typing in the search box
+        # visibly laggy. blockSignals during _reload keeps this from firing there.
+        self.table.itemChanged.connect(self._on_item_changed)
 
         buc_label = QLabel(t("Buc:"))
         self.buc = QSpinBox()
@@ -271,29 +328,27 @@ class _OblioPickerDialog(QDialog):
         search = self.search.text().strip() or None
         self._oblio_cache = self.repo.list_oblio_products(search=search)
         rows = [p for p in self._oblio_cache if p["id"] not in self._already_attached]
+        self.table.blockSignals(True)  # suppress itemChanged while (re)populating
         self.table.setRowCount(len(rows))
         self._row_to_oblio_id = [p["id"] for p in rows]
         for row, p in enumerate(rows):
-            cb = QCheckBox()
-            cb.blockSignals(True)
-            cb.setChecked(p["id"] in self._selected_ids)
-            cb.blockSignals(False)
-            cb.toggled.connect(
-                lambda checked, oid=p["id"]: self._on_check_toggled(oid, checked)
-            )
-            wrapper = QWidget()
-            hb = QHBoxLayout(wrapper)
-            hb.setContentsMargins(8, 0, 0, 0)
-            hb.addWidget(cb)
-            hb.addStretch(1)
-            self.table.setCellWidget(row, 0, wrapper)
+            check_item = QTableWidgetItem()
+            check_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                                | Qt.ItemFlag.ItemIsUserCheckable)
+            check_item.setCheckState(Qt.CheckState.Checked if p["id"] in self._selected_ids
+                                     else Qt.CheckState.Unchecked)
+            self.table.setItem(row, 0, check_item)
             self.table.setItem(row, 1, QTableWidgetItem(p.get("code") or ""))
             self.table.setItem(row, 2, QTableWidgetItem(p.get("name") or ""))
             self.table.setItem(row, 3, QTableWidgetItem(p.get("measuring_unit") or ""))
+        self.table.blockSignals(False)
         self._update_selection_label()
 
-    def _on_check_toggled(self, oblio_id: int, checked: bool) -> None:
-        if checked:
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() != 0 or not (0 <= item.row() < len(self._row_to_oblio_id)):
+            return
+        oblio_id = self._row_to_oblio_id[item.row()]
+        if item.checkState() == Qt.CheckState.Checked:
             self._selected_ids.add(oblio_id)
         else:
             self._selected_ids.discard(oblio_id)

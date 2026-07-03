@@ -2,12 +2,15 @@ from PySide6.QtCore import QModelIndex, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter,
-    QTableView, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QStackedLayout, QTableView, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from src.i18n import t
 from src.storage.repo import Repo
 from src.ui.models import DictRowsModel
+from src.ui.widgets import (
+    PILL_GREEN, PILL_GREY, PillDelegate, attach_search_debounce, polish_table,
+)
 
 
 class MappingView(QWidget):
@@ -37,16 +40,30 @@ class MappingView(QWidget):
         self.search.setPlaceholderText(t("Search Oblio products…"))
         self.search.textChanged.connect(self._on_search_changed)
 
+        self.only_mapped_chk = QCheckBox("Doar produsele cu variante")
+        self.only_mapped_chk.toggled.connect(lambda _: self._reload_products())
+        self.count_label = QLabel("")
+        self.count_label.setObjectName("subtitle")
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(self.only_mapped_chk)
+        filter_row.addStretch(1)
+        filter_row.addWidget(self.count_label)
+
         # Oblio products: virtualised model+view for catalogs of thousands of rows.
         def _txt(key):
             return lambda r, role: r.get(key, "") if role == Qt.ItemDataRole.DisplayRole else None
 
         def _linked(r, role):
+            # Rendered as a pill; plain text kept for sorting.
             if role == Qt.ItemDataRole.DisplayRole:
                 return str(r.get("linked_count", 0))
-            if role == Qt.ItemDataRole.ForegroundRole and not r.get("linked_count"):
-                return Qt.GlobalColor.gray
             return None
+
+        def _linked_pill(row: dict) -> tuple[str, str, str] | None:
+            n = row.get("linked_count", 0)
+            if n:
+                return (f"{n} variante" if n > 1 else "1 variantă", *PILL_GREEN)
+            return ("—", *PILL_GREY)
 
         self._products_model = DictRowsModel(columns=[
             (t("Code"),     _txt("code")),
@@ -66,7 +83,8 @@ class MappingView(QWidget):
         self.products_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.products_table.setSortingEnabled(True)
         self.products_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.products_table.verticalHeader().setDefaultSectionSize(22)
+        polish_table(self.products_table)
+        self.products_table.setItemDelegateForColumn(3, PillDelegate(_linked_pill, self.products_table))
         self.products_table.doubleClicked.connect(self._open_pair_dialog)
         # Reload right pane when selection changes — selectionModel exists after setModel.
         self.products_table.selectionModel().selectionChanged.connect(
@@ -86,12 +104,26 @@ class MappingView(QWidget):
         self.mappings_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.mappings_table.setColumnWidth(3, 80)
         self.mappings_table.setColumnWidth(4, 90)
+        self.mappings_table.setAlternatingRowColors(True)
+        self.mappings_table.setShowGrid(False)
+        self.mappings_table.verticalHeader().setVisible(False)
+        self.mappings_table.verticalHeader().setDefaultSectionSize(34)
+
+        # Right-pane empty state (no selection / no variants yet).
+        self.right_empty = QLabel("")
+        self.right_empty.setObjectName("emptyState")
+        self.right_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.right_empty.setWordWrap(True)
+        self._right_stack = QStackedLayout()
+        self._right_stack.addWidget(self.mappings_table)  # 0
+        self._right_stack.addWidget(self.right_empty)     # 1
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(16, 12, 8, 12)
         left_layout.addLayout(header)
         left_layout.addWidget(self.search)
+        left_layout.addLayout(filter_row)
         left_layout.addWidget(self.products_table, 1)
 
         right = QWidget()
@@ -101,7 +133,7 @@ class MappingView(QWidget):
         self.selected_label.setObjectName("subtitle")
         right_layout.addWidget(self.selected_label)
         right_layout.addWidget(pair_btn)
-        right_layout.addWidget(self.mappings_table, 1)
+        right_layout.addLayout(self._right_stack, 1)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(left)
@@ -126,17 +158,25 @@ class MappingView(QWidget):
         # by the proxy. Cheap because list_oblio_products is one indexed query.
         self._products_cache = self.repo.list_oblio_products()
         counts = self.repo.count_variants_per_oblio()
+        only_mapped = self.only_mapped_chk.isChecked()
         rows = []
         for p in self._products_cache:
+            n = counts.get(p["id"], 0)
+            if only_mapped and not n:
+                continue
             rows.append({
                 "id": p["id"],
                 "code": p.get("code") or "",
                 "name": p["name"],
                 "measuring_unit": p.get("measuring_unit") or "",
-                "linked_count": counts.get(p["id"], 0),
+                "linked_count": n,
             })
         self._products_model.set_rows(rows)
         self._products_proxy.setFilterFixedString(self.search.text().strip())
+        n_mapped = sum(1 for c in counts.values() if c)
+        self.count_label.setText(
+            f"{len(self._products_cache)} produse · {n_mapped} cu variante"
+        )
         self._reload_mappings_for_selected()
 
     def _selected_product(self) -> dict | None:
@@ -157,10 +197,19 @@ class MappingView(QWidget):
         product = self._selected_product()
         if not product:
             self.mappings_table.setRowCount(0)
-            self.selected_label.setText("Select an Oblio product on the left.")
+            self.selected_label.setText(t("Select an Oblio product on the left."))
+            self.right_empty.setText("Selectează un produs Oblio din stânga\npentru a-i vedea variantele.")
+            self._right_stack.setCurrentIndex(1)
             return
         self.selected_label.setText(t("Linked Trendyol listings for: ") + product['name'])
         maps = self.repo.get_variants_for_oblio(product["id"])
+        if not maps:
+            self.right_empty.setText(
+                "Nicio variantă încă.\nApasă „Asociază produse Trendyol…” pentru a lega anunțuri."
+            )
+            self._right_stack.setCurrentIndex(1)
+            return
+        self._right_stack.setCurrentIndex(0)
         self.mappings_table.setRowCount(len(maps))
         for row, m in enumerate(maps):
             self.mappings_table.setItem(row, 0, QTableWidgetItem(m.get("title") or ""))
@@ -255,7 +304,7 @@ class PairDialog(QDialog):
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search Trendyol listings (title, barcode, stock code)…")
-        self.search.textChanged.connect(self._reload)
+        attach_search_debounce(self.search, self._reload)
 
         # Multi-Oblio is allowed: a listing already mapped to other Oblio products
         # should still be pickable. We only filter out listings already linked TO
@@ -264,12 +313,22 @@ class PairDialog(QDialog):
         self.only_unmapped.setChecked(True)
         self.only_unmapped.stateChanged.connect(self._reload)
 
+        self.selection_label = QLabel("")
+        self.selection_label.setObjectName("subtitle")
+
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["", "Title", "Barcode", "Stock code", "Brand"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.setColumnWidth(0, 36)
+        # Native checkable items (below) instead of per-cell QCheckBox widgets —
+        # thousands of embedded widgets per reload made typing in the search box
+        # visibly laggy. blockSignals during _reload keeps this from firing there.
+        self.table.itemChanged.connect(self._on_item_changed)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         save_btn = buttons.button(QDialogButtonBox.StandardButton.Save)
@@ -284,10 +343,14 @@ class PairDialog(QDialog):
         layout.addWidget(title)
         layout.addWidget(self.search)
         layout.addWidget(self.only_unmapped)
+        layout.addWidget(self.selection_label)
         layout.addWidget(self.table, 1)
         layout.addWidget(buttons)
 
         self._listings: list[dict] = []
+        # Checked state keyed by listing id so it survives filter/search reloads
+        # (the table and its checkbox widgets are recreated on every _reload).
+        self._selected_ids: set[int] = set()
         self._reload()
 
     def _reload(self) -> None:
@@ -295,27 +358,35 @@ class PairDialog(QDialog):
         hide_already_linked = self.only_unmapped.isChecked()
         exclude_id = self.product["id"] if hide_already_linked else None
         self._listings = self.repo.list_trendyol_listings(search=search, exclude_for_oblio_id=exclude_id)
+        self.table.blockSignals(True)  # suppress itemChanged while (re)populating
         self.table.setRowCount(len(self._listings))
         for row, l in enumerate(self._listings):
-            cb = QCheckBox()
-            wrapper = QWidget()
-            hb = QHBoxLayout(wrapper)
-            hb.setContentsMargins(8, 0, 0, 0)
-            hb.addWidget(cb)
-            hb.addStretch(1)
-            self.table.setCellWidget(row, 0, wrapper)
+            check_item = QTableWidgetItem()
+            check_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                                | Qt.ItemFlag.ItemIsUserCheckable)
+            check_item.setCheckState(Qt.CheckState.Checked if l["id"] in self._selected_ids
+                                     else Qt.CheckState.Unchecked)
+            self.table.setItem(row, 0, check_item)
             self.table.setItem(row, 1, QTableWidgetItem(l.get("title") or ""))
             self.table.setItem(row, 2, QTableWidgetItem(l.get("barcode") or ""))
             self.table.setItem(row, 3, QTableWidgetItem(l.get("stock_code") or ""))
             self.table.setItem(row, 4, QTableWidgetItem(l.get("brand") or ""))
+        self.table.blockSignals(False)
+        self._update_selection_label()
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() != 0 or not (0 <= item.row() < len(self._listings)):
+            return
+        listing_id = self._listings[item.row()]["id"]
+        if item.checkState() == Qt.CheckState.Checked:
+            self._selected_ids.add(listing_id)
+        else:
+            self._selected_ids.discard(listing_id)
+        self._update_selection_label()
+
+    def _update_selection_label(self) -> None:
+        n = len(self._selected_ids)
+        self.selection_label.setText(f"{n} anunț(uri) selectat(e)" if n else "")
 
     def selected_listing_ids(self) -> list[int]:
-        ids: list[int] = []
-        for row in range(self.table.rowCount()):
-            wrapper = self.table.cellWidget(row, 0)
-            if wrapper is None:
-                continue
-            cb = wrapper.findChild(QCheckBox)
-            if cb and cb.isChecked():
-                ids.append(self._listings[row]["id"])
-        return ids
+        return sorted(self._selected_ids)

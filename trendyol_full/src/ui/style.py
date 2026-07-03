@@ -79,4 +79,45 @@ QListWidget#sidebar::item:selected {
 }
 
 QStatusBar { background-color: #0b1427; color: #94a3b8; }
+
+QTableView::item { padding: 2px 6px; border: 0; }
+QTableView::item:selected { background-color: #1e40af; color: #f8fafc; }
+
+QToolButton {
+    background-color: #1e293b;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 7px 14px;
+}
+QToolButton:hover { background-color: #334155; }
+QToolButton::menu-indicator { image: none; }
+
+QMenu {
+    background-color: #111c34;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+    padding: 4px;
+}
+QMenu::item { padding: 6px 18px; border-radius: 4px; }
+QMenu::item:selected { background-color: #1e40af; }
+
+QLabel#chip {
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-weight: 600;
+    font-size: 12px;
+}
+QLabel#chip[chipRole="neutral"] { background-color: #1e293b; color: #cbd5e1; }
+QLabel#chip[chipRole="ok"]      { background-color: #14532d; color: #86efac; }
+QLabel#chip[chipRole="warn"]    { background-color: #78350f; color: #fcd34d; }
+QLabel#chip[chipRole="muted"]   { background-color: #0b1427; color: #64748b; }
+
+QLabel#emptyState {
+    color: #64748b;
+    font-size: 15px;
+    background-color: #111c34;
+    border: 1px dashed #1e293b;
+    border-radius: 8px;
+}
 """
