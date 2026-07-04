@@ -19,8 +19,8 @@ from src.services.invoicing import notify_trendyol_of_invoice, send_local_invoic
 from src.storage.repo import Repo
 from src.ui.models import DictRowsModel
 from src.ui.widgets import (
-    PILL_AMBER, PILL_BLUE, PILL_GREEN, PILL_GREY, PILL_INDIGO, PILL_RED, PillDelegate,
-    polish_table,
+    PILL_AMBER, PILL_BLUE, PILL_GREEN, PILL_GREY, PILL_INDIGO, PILL_RED, BusyDialog,
+    PillDelegate, TaskRunner, polish_table,
 )
 
 
@@ -553,23 +553,81 @@ class InvoicesView(QWidget):
         self._do_send([r["id"] for r in unsent])
 
     def _do_send(self, invoice_ids: list[int]) -> None:
+        """
+        Send a batch on a worker thread with a progress dialog.
+
+        Rate-limit hygiene (Oblio 429s at scale):
+          - ONE client for the whole batch — one auth token instead of one
+            token request PER invoice (halves the total API calls).
+          - A short pause between sends.
+          - Circuit breaker: 3 consecutive 429-failures abort the rest of the
+            batch instead of burning ~15s of retries on every remaining
+            invoice. The untouched drafts stay unsent and can be re-sent later.
+        """
         dry = self.repo.oblio_dry_run()
-        sent = 0
-        failed: list[tuple[str, str]] = []
-        for iid in invoice_ids:
-            try:
-                send_local_invoice_to_oblio(self.repo, iid, dry_run=dry)
-                sent += 1
-            except Exception as e:
-                inv = self.repo.get_invoice(iid) or {}
-                failed.append((inv.get("number") or str(iid), str(e)))
-        verb = "DRY-RUN trimise" if dry else "trimise către Oblio"
-        msg = f"{sent} {verb}."
-        if failed:
-            details = "\n".join(f"  • {n}: {e[:120]}" for n, e in failed[:10])
-            msg += f"\n\n{len(failed)} au eșuat:\n{details}"
-        QMessageBox.information(self, "Trimitere finalizată", msg)
-        self.refresh()
+        repo = self.repo
+        total = len(invoice_ids)
+
+        def job(progress):
+            import time
+            from src.services.sync import build_oblio_client
+            client = build_oblio_client(repo)
+            sent = 0
+            failed: list[tuple[str, str]] = []
+            consecutive_429 = 0
+            for i, iid in enumerate(invoice_ids, 1):
+                progress(f"Trimitere factura {i} din {total}…")
+                try:
+                    send_local_invoice_to_oblio(repo, iid, client=client, dry_run=dry)
+                    sent += 1
+                    consecutive_429 = 0
+                except Exception as e:
+                    inv = repo.get_invoice(iid) or {}
+                    failed.append((inv.get("number") or str(iid), str(e)))
+                    if "429" in str(e) or "Too Many Requests" in str(e):
+                        consecutive_429 += 1
+                        if consecutive_429 >= 3:
+                            remaining = total - i
+                            if remaining:
+                                failed.append((
+                                    "⏸",
+                                    f"Oblio limitează cererile — m-am oprit; {remaining} facturi "
+                                    f"au rămas netrimise. Reîncearcă mai târziu cu "
+                                    f"„Trimite toate (vizibile, netrimise)”.",
+                                ))
+                            break
+                    else:
+                        consecutive_429 = 0
+                if i < total:
+                    time.sleep(0.35)
+            return sent, failed
+
+        dlg = BusyDialog("Trimitere către Oblio", f"Trimitere 0 din {total}…", self)
+        runner = TaskRunner(job, self)
+        runner.progress.connect(dlg.set_message)
+
+        def on_done(payload):
+            dlg.accept()
+            sent, failed = payload
+            verb = "DRY-RUN trimise" if dry else "trimise către Oblio"
+            msg = f"{sent} {verb}."
+            if failed:
+                details = "\n".join(f"  • {n}: {e[:160]}" for n, e in failed[:10])
+                msg += f"\n\n{len(failed)} au eșuat:\n{details}"
+            QMessageBox.information(self, "Trimitere finalizată", msg)
+            self.refresh()
+
+        def on_failed(msg):
+            dlg.reject()
+            QMessageBox.critical(self, "Trimitere eșuată", msg)
+            self.refresh()
+
+        runner.done.connect(on_done)
+        runner.failed.connect(on_failed)
+        # Keep a reference so the runner isn't garbage-collected mid-batch.
+        self._send_runner = runner
+        runner.start()
+        dlg.exec()
 
     def _resend_selected(self) -> None:
         data = self._selected_row()
