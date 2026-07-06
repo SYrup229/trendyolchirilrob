@@ -37,6 +37,7 @@ import os
 import re
 import sqlite3
 import sys
+import urllib.parse
 from pathlib import Path
 
 
@@ -57,7 +58,11 @@ def default_db_path() -> Path:
 
 def open_readonly(path: Path) -> sqlite3.Connection:
     # file: URI with mode=ro guarantees we can't write to the live DB.
-    uri = f"file:{path.as_posix()}?mode=ro"
+    # The path must be percent-encoded: a literal '#' would truncate the URI at
+    # the fragment (silently opening the WRONG path) and a literal '%' would be
+    # mis-decoded. safe="/:" keeps the drive-letter colon and slashes intact.
+    quoted = urllib.parse.quote(path.as_posix(), safe="/:")
+    uri = f"file:{quoted}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
     return conn
@@ -100,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Output CSV path (default: judet_export.csv next to the program).")
     parser.add_argument("--sent-only", action="store_true",
                         help="Only invoices that were actually sent to Oblio (have an Oblio link).")
+    parser.add_argument("--excel-safe", action="store_true",
+                        help="Write invoice numbers as =\"0788\" so Excel keeps leading zeros "
+                             "(e.g. GR 0788 would otherwise display and re-save as 788).")
     parser.add_argument("--no-pause", action="store_true",
                         help="Do not wait for a keypress before closing (for scripted/CI use).")
     args = parser.parse_args(argv)
@@ -109,8 +117,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: database not found at:\n  {db_path}\n"
               f"Pass the correct path with --db.", file=sys.stderr)
         return 2
-
-    conn = open_readonly(db_path)
 
     where = "WHERE i.oblio_link IS NOT NULL AND i.oblio_link <> ''" if args.sent_only else ""
     query = f"""
@@ -124,10 +130,15 @@ def main(argv: list[str] | None = None) -> int:
         {where}
         ORDER BY i.id
     """
+    # sqlite3.Error (not just OperationalError) also covers "file is not a
+    # database" when --db points at something that isn't a SQLite file.
     try:
+        conn = open_readonly(db_path)
         rows = conn.execute(query).fetchall()
-    except sqlite3.OperationalError as e:
-        print(f"ERROR reading the database: {e}", file=sys.stderr)
+    except sqlite3.Error as e:
+        print(f"ERROR reading the database: {e}\n"
+              f"  {db_path}\n"
+              f"Is this really the app's trendyol_full.sqlite3?", file=sys.stderr)
         return 2
 
     total = 0
@@ -137,20 +148,28 @@ def main(argv: list[str] | None = None) -> int:
 
     # utf-8-sig writes a BOM so Excel opens Romanian diacritics (ă, î, ș, ț) and
     # Bulgarian/Greek region names (Cyrillic/Greek script) correctly.
+    # OSError covers PermissionError (file open in Excel) and FileNotFoundError
+    # (--out points into a folder that doesn't exist).
     try:
         fh = open(args.out, "w", newline="", encoding="utf-8-sig")
-    except PermissionError:
+    except OSError as e:
         print(f"ERROR: cannot write to {args.out}\n"
-              f"Is it open in Excel? Close it and run again.", file=sys.stderr)
+              f"  {e}\n"
+              f"If it's open in Excel, close it and run again.", file=sys.stderr)
         return 2
     with fh:
         writer = csv.writer(fh)
         writer.writerow(["invoice_series", "invoice_number", "buyer_name", "city", "judet"])
         for r in rows:
             judet, city, country = extract_address(r["raw_json"])
+            number = clean(r["number"])
+            if args.excel_safe:
+                # ="0788" makes Excel treat the number as text, preserving
+                # leading zeros. Plain CSV readers see a literal ="0788".
+                number = f'="{number}"'
             writer.writerow([
                 clean(r["series"]),
-                clean(r["number"]),
+                number,
                 clean(r["buyer_name"]),
                 city,
                 judet,

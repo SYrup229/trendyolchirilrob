@@ -50,6 +50,10 @@ python export_judet.py --db "C:\path\to\his\trendyol_full.sqlite3"
 # Only invoices actually sent to Oblio (skip local drafts):
 python export_judet.py --sent-only
 
+# If the CSV will be opened in Excel: keep leading zeros in invoice numbers
+# (e.g. GR 0788 would otherwise display and re-save as 788):
+python export_judet.py --excel-safe
+
 # Custom output path:
 python export_judet.py --out "C:\Users\me\Desktop\judet_for_oblio.csv"
 ```
@@ -95,5 +99,6 @@ and a warning count for any row with no județ/region in the order data.
 --db PATH      database to read (default: %APPDATA%\TrendyolFull\trendyol_full.sqlite3)
 --out FILE     output CSV path (default: judet_export.csv next to the program)
 --sent-only    only invoices with an Oblio link
+--excel-safe   write invoice numbers as ="0788" so Excel keeps leading zeros
 --no-pause     don't wait for a keypress before closing (for scripts/CI)
 ```

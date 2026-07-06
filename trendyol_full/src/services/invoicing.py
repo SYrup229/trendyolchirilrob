@@ -382,9 +382,23 @@ def refresh_local_drafts(repo: Repo) -> int:
                         inv.get("number"), e)
             continue
         if not preview.all_mapped:
-            # Order has become unmappable since the draft was written — leave it
-            # alone so the existing draft (and its last_send_error, if any) stays
-            # visible for triage.
+            # Order has become unmappable since the draft was written — we can't
+            # rebuild lines/totals, so leave those (and last_send_error) alone for
+            # triage. But the buyer ADDRESS needs no mappings: patch just the
+            # buyer block so address fixes (e.g. the județ field, BUILDER_REV 2)
+            # reach every unsent draft. build_sig stays stale on purpose — once
+            # the mappings are repaired, the full rebuild still happens.
+            if repo.patch_draft_buyer(inv["id"], {
+                "name": preview.buyer_name,
+                "email": preview.buyer_email,
+                "address": preview.ship_address,
+                "city": preview.ship_city,
+                "state": preview.ship_state,
+                "country": preview.ship_country,
+            }):
+                log.info("refresh-local-drafts: patched buyer block only for "
+                         "invoice %s (order not fully mapped)", inv.get("number"))
+                refreshed += 1
             continue
         series = _series_for_country(repo, preview.ship_country)
         record = _local_invoice_record(

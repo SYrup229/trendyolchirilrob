@@ -612,6 +612,40 @@ class Repo:
             )
             return cur.rowcount > 0
 
+    def patch_draft_buyer(self, invoice_id: int, buyer: dict[str, Any]) -> bool:
+        """
+        Overwrite ONLY the `buyer` block inside a LOCAL draft's raw_response —
+        used when the full rebuild is impossible (order no longer fully mapped)
+        but the buyer address (județ!) can still be corrected. Lines, totals and
+        build_sig are deliberately left untouched so a later mapping fix still
+        triggers the full refresh_local_drafts rebuild.
+        No-op (returns False) if the draft was already sent to Oblio, its record
+        is unparseable, or the buyer block already matches.
+        """
+        with tx() as conn:
+            row = conn.execute(
+                "SELECT raw_response FROM invoices "
+                "WHERE id = ? AND (oblio_link IS NULL OR oblio_link = '')",
+                (invoice_id,),
+            ).fetchone()
+            if not row:
+                return False
+            try:
+                record = json.loads(row["raw_response"] or "{}")
+            except ValueError:
+                return False
+            if not isinstance(record, dict):
+                return False
+            if record.get("buyer") == buyer:
+                return False  # already up to date — don't rewrite every tick
+            record["buyer"] = buyer
+            cur = conn.execute(
+                "UPDATE invoices SET raw_response = ? "
+                "WHERE id = ? AND (oblio_link IS NULL OR oblio_link = '')",
+                (json.dumps(record, ensure_ascii=False), invoice_id),
+            )
+            return cur.rowcount > 0
+
     def list_stale_drafts(self, builder_rev: str, mappings_rev: str) -> list[dict[str, Any]]:
         """
         Unsent drafts whose build_sig no longer matches the current inputs
