@@ -1,0 +1,60 @@
+name: Build Judet Exporter .exe
+
+# Builds judet_fix/JudetExport.exe the same way the main app is built:
+#   - push to main: smoke build, artifact uploaded
+#   - tag push v*:  attached to the GitHub Release
+#   - manual:       workflow_dispatch from the Actions tab
+# NOTE: no `paths:` filter on purpose — combined with `tags:` it can make the
+# tag push skip this workflow, which would leave the exe off the Release. The
+# build is stdlib-only and takes seconds, so building on every push is cheap.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to attach the exe to a Release on tag pushes
+
+jobs:
+  build-judet-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: judet_fix
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Syntax check
+        run: python -m compileall -q export_judet.py build_judet_exe.py
+
+      - name: Build executable
+        run: python build_judet_exe.py
+
+      - name: Show dist contents
+        run: Get-ChildItem dist -Recurse | Select-Object FullName, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JudetExport-${{ github.sha }}.exe
+          path: judet_fix/dist/JudetExport.exe
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: judet_fix/dist/JudetExport.exe

@@ -17,7 +17,10 @@ INVOICEABLE_STATUSES = INVOICEABLE_TRENDYOL_STATUSES
 # Bump when invoice-BUILDING logic changes (VAT maps, series maps, price split,
 # payload shape…). Any unsent draft whose build_sig carries an older rev gets
 # rebuilt on the next poller tick; matching drafts are skipped entirely.
-BUILDER_REV = "1"
+# rev 2: buyer county (județ) added to the invoice address.
+# rev 3: billing address (invoiceAddress) preferred over shipment; Bucharest
+#        rule (județ=București, localitate=Sector N).
+BUILDER_REV = "3"
 
 
 def _build_sig(repo: Repo, order_fetched_at: str | None) -> str:
@@ -91,12 +94,42 @@ class InvoicePreview:
     buyer_email: str | None
     ship_address: str | None
     ship_city: str | None
+    ship_state: str | None      # județ / county / region — required on RO invoices
     ship_country: str | None
     currency: str
     lines: list[InvoicePreviewLine]
     shipping_amount: float              # 0 if Trendyol bundles shipping into line prices
     total_gross: float                  # sum of line totals + shipping; what customer paid
     all_mapped: bool
+
+
+def _resolve_billing_address(raw: dict[str, Any], order: dict[str, Any]) -> tuple[str | None, str | None, str | None, str | None]:
+    """
+    (address, city/localitate, state/județ, country) for the invoice's buyer.
+
+    Prefers the customer's BILLING address (invoiceAddress) over the shipment
+    one; falls back per-field to the stored order columns for legacy rows.
+    County: RO fills `countyName` ("Dolj"), BG/GR fill `stateName`.
+    Bucharest rule: județ = "București" and localitate = "Sector N" — the raw
+    data has city="Bucuresti", countyName="București"/"Bucuresti" and a bare
+    digit in `sector` (invoiceAddress only).
+    """
+    addr = raw.get("invoiceAddress") or {}
+    if not (addr.get("address1") or addr.get("city")):
+        addr = raw.get("shipmentAddress") or {}
+
+    address = " ".join(filter(None, [addr.get("address1"), addr.get("address2")])).strip() \
+        or order.get("ship_address")
+    city = (addr.get("city") or "").strip() or order.get("ship_city")
+    state = (addr.get("countyName") or addr.get("stateName") or "").strip() or None
+    country = (addr.get("countryCode") or "").strip() or order.get("ship_country")
+
+    if (country or "").upper() == "RO" and "bucure" in f"{city} {state or ''}".lower():
+        state = "București"
+        sector = str(addr.get("sector") or "").strip()
+        if sector:
+            city = sector if sector.lower().startswith("sector") else f"Sector {sector}"
+    return address, city, state, country
 
 
 def build_preview(repo: Repo, order_id: int) -> InvoicePreview:
@@ -108,6 +141,11 @@ def build_preview(repo: Repo, order_id: int) -> InvoicePreview:
     # "Default VAT" when the ship country isn't in COUNTRY_VAT. Per-product VAT
     # from Oblio still wins on a per-line basis below.
     country_vat = _vat_for_country(order.get("ship_country"), repo.default_vat())
+
+    # Buyer address for the INVOICE: the customer's billing address
+    # (invoiceAddress), with the shipment address only as fallback. They differ
+    # on real orders, and the Bucharest `sector` exists only on invoiceAddress.
+    bill_address, bill_city, bill_state, bill_country = _resolve_billing_address(raw, order)
 
     lines: list[InvoicePreviewLine] = []
     total_gross = 0.0
@@ -233,9 +271,10 @@ def build_preview(repo: Repo, order_id: int) -> InvoicePreview:
         order_status=order.get("status"),
         buyer_name=order["buyer_name"] or "Client Trendyol",
         buyer_email=order["buyer_email"],
-        ship_address=order["ship_address"],
-        ship_city=order["ship_city"],
-        ship_country=order["ship_country"],
+        ship_address=bill_address,
+        ship_city=bill_city,
+        ship_state=bill_state,
+        ship_country=bill_country,
         currency=currency,
         lines=lines,
         shipping_amount=shipping_amount,
@@ -271,7 +310,8 @@ def _detect_shipping(raw: dict[str, Any]) -> float:
 
 def auto_create_local_invoices(repo: Repo) -> tuple[int, int]:
     """
-    For every pending order with all lines mapped AND a status in {Shipped, Delivered},
+    For every pending order with all lines mapped AND a dispatched status
+    (Shipped, AtCollectionPoint, Delivered — see INVOICEABLE_TRENDYOL_STATUSES),
     create a LOCAL invoice (no Oblio POST) using Oblio product names/codes/VAT in
     place of the raw Trendyol line data.
 
@@ -426,6 +466,7 @@ def _local_invoice_record(preview: InvoicePreview, series: str, number: str,
             "email": preview.buyer_email,
             "address": preview.ship_address,
             "city": preview.ship_city,
+            "state": preview.ship_state,
             "country": preview.ship_country,
         },
         "currency": preview.currency,
@@ -729,6 +770,7 @@ def _build_oblio_payload(repo: Repo, preview: InvoicePreview, client: OblioClien
         "email": preview.buyer_email or "",
         "address": preview.ship_address or "",
         "city": preview.ship_city or "",
+        "state": preview.ship_state or "",   # județ — required on RO invoices
         "country": preview.ship_country or "",
         "save": 0,
         "autocomplete": 0,

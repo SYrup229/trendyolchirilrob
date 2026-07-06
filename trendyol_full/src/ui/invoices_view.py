@@ -780,7 +780,8 @@ class LocalInvoiceDialog(QDialog):
             f"<b>Status:</b> {record.get('order_status') or '—'}<br>"
             f"<b>Client:</b> {buyer.get('name','')}<br>"
             f"<b>Email:</b> {buyer.get('email') or '—'}<br>"
-            f"<b>Adresă:</b> {buyer.get('address') or '—'}, {buyer.get('city') or ''} {buyer.get('country') or ''}<br>"
+            f"<b>Adresă:</b> {buyer.get('address') or '—'}, {buyer.get('city') or ''}"
+            f"{', jud. ' + buyer['state'] if buyer.get('state') else ''} {buyer.get('country') or ''}<br>"
             f"<b>Monedă:</b> {record.get('currency','')}"
         )
         top.setTextFormat(Qt.TextFormat.RichText)

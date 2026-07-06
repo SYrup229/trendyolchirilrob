@@ -17,19 +17,29 @@ class TrendyolStatus(StrEnum):
     PICKING = "Picking"
     INVOICED = "Invoiced"       # Trendyol's own field, not our state
     SHIPPED = "Shipped"
+    ATCOLLECTIONPOINT = "AtCollectionPoint"  # parcel handed off, waiting at a pickup point/locker
     DELIVERED = "Delivered"
     CANCELLED = "Cancelled"
     RETURNED = "Returned"
     UNSUPPLIED = "UnSupplied"
     UNDELIVERED = "UnDelivered"
+    UNPACKED = "UnPacked"
     UNKNOWN = "Unknown"
 
 
 # Statuses where we're confident the order has actually shipped and a fiscal
 # invoice should exist. Earlier statuses (Created/Picking) might still be
 # cancelled before shipping.
+#
+# AtCollectionPoint is strictly *further* along than Shipped — the parcel has
+# left the seller and is sitting at a pickup point/locker awaiting the customer
+# (Trendyol shows "Factură în așteptare" for these). Since Shipped is already
+# invoiceable, AtCollectionPoint must be too, otherwise locker/pickup-point
+# orders never get an invoice. (UnDelivered is deliberately left out: those
+# often turn into Returns, which we can't credit-note yet.)
 INVOICEABLE_TRENDYOL_STATUSES: frozenset[str] = frozenset({
     TrendyolStatus.SHIPPED.value,
+    TrendyolStatus.ATCOLLECTIONPOINT.value,
     TrendyolStatus.DELIVERED.value,
 })
 

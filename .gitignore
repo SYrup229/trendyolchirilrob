@@ -10,6 +10,12 @@ venv/
 trendyol_full/build/
 trendyol_full/dist/
 trendyol_full/*.spec
+judet_fix/build/
+judet_fix/dist/
+judet_fix/*.spec
+
+# Generated judet export
+judet_fix/judet_export.csv
 
 # Generated test invoices (any series)
 trendyol_full/*LOC-*.html

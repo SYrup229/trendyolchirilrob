@@ -85,7 +85,10 @@ def render_invoice_html(repo: Repo, invoice_row: dict[str, Any]) -> str:
         buyer_name=html.escape(buyer.get("name") or ""),
         buyer_email=html.escape(buyer.get("email") or "—"),
         buyer_address=html.escape(buyer.get("address") or "—"),
-        buyer_city=html.escape(buyer.get("city") or ""),
+        buyer_city=html.escape(
+            (buyer.get("city") or "")
+            + (f", jud. {buyer['state']}" if buyer.get("state") else "")
+        ),
         buyer_country=html.escape(buyer.get("country") or ""),
         currency=html.escape(currency),
         subtotal_net=f"{subtotal_net:.2f}",
