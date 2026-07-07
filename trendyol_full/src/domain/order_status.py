@@ -32,15 +32,16 @@ class TrendyolStatus(StrEnum):
 # cancelled before shipping.
 #
 # AtCollectionPoint is strictly *further* along than Shipped — the parcel has
-# left the seller and is sitting at a pickup point/locker awaiting the customer
-# (Trendyol shows "Factură în așteptare" for these). Since Shipped is already
-# invoiceable, AtCollectionPoint must be too, otherwise locker/pickup-point
-# orders never get an invoice. (UnDelivered is deliberately left out: those
-# often turn into Returns, which we can't credit-note yet.)
+# left the seller and is sitting at a pickup point/locker awaiting the customer.
+# UnDelivered (courier could not deliver) is invoiceable too: the goods shipped,
+# and Trendyol's billing view shows "Factură în așteptare" for these packages —
+# verified live on order 11359838794. If one later becomes a Return, the storno
+# is handled in Oblio like any other return.
 INVOICEABLE_TRENDYOL_STATUSES: frozenset[str] = frozenset({
     TrendyolStatus.SHIPPED.value,
     TrendyolStatus.ATCOLLECTIONPOINT.value,
     TrendyolStatus.DELIVERED.value,
+    TrendyolStatus.UNDELIVERED.value,
 })
 
 

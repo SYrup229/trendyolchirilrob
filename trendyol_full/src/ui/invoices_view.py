@@ -41,8 +41,10 @@ def _status_pill(row: dict) -> tuple[str, str, str] | None:
         return None
     if s == "Delivered":
         return (s, *PILL_BLUE)
-    if s == "Shipped":
+    if s in ("Shipped", "AtCollectionPoint"):
         return (s, *PILL_GREEN)
+    if s == "UnDelivered":
+        return (s, *PILL_AMBER)
     return (s, *PILL_GREY)
 
 

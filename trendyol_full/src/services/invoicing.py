@@ -1,5 +1,6 @@
 import json
 import traceback
+import zlib
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -20,7 +21,8 @@ INVOICEABLE_STATUSES = INVOICEABLE_TRENDYOL_STATUSES
 # rev 2: buyer county (județ) added to the invoice address.
 # rev 3: billing address (invoiceAddress) preferred over shipment; Bucharest
 #        rule (județ=București, localitate=Sector N).
-BUILDER_REV = "3"
+# rev 4: Bucharest orders without a sector get a stable pseudo-random Sector 1-6.
+BUILDER_REV = "4"
 
 
 def _build_sig(repo: Repo, order_fetched_at: str | None) -> str:
@@ -127,8 +129,13 @@ def _resolve_billing_address(raw: dict[str, Any], order: dict[str, Any]) -> tupl
     if (country or "").upper() == "RO" and "bucure" in f"{city} {state or ''}".lower():
         state = "București"
         sector = str(addr.get("sector") or "").strip()
-        if sector:
-            city = sector if sector.lower().startswith("sector") else f"Sector {sector}"
+        if not sector:
+            # Customer didn't fill in a sector. Per the user's rule, assign one
+            # 1-6 — deterministically from the order number, so draft rebuilds
+            # never reshuffle it (preview, payload and export always agree).
+            key = str(order.get("order_number") or order.get("id") or "")
+            sector = str(1 + zlib.crc32(key.encode()) % 6)
+        city = sector if sector.lower().startswith("sector") else f"Sector {sector}"
     return address, city, state, country
 
 
