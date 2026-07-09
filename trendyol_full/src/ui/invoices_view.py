@@ -572,37 +572,60 @@ class InvoicesView(QWidget):
 
         def job(progress):
             import time
+            from src.services.invoicing import _TRANSIENT_OBLIO_FRAGMENT, plan_batch_stock
             from src.services.sync import build_oblio_client
             client = build_oblio_client(repo)
+
+            # Pre-flight: hold back invoices the live Oblio stock can't cover
+            # (budgeted across the WHOLE batch, so a product drained mid-batch
+            # is caught up front instead of failing halfway through).
+            held: list[tuple[str, str]] = []
+            to_send = invoice_ids
+            if not dry:
+                progress("Verific stocul în Oblio…")
+                to_send, held = plan_batch_stock(repo, client, invoice_ids)
+
+            n = len(to_send)
             sent = 0
             failed: list[tuple[str, str]] = []
             consecutive_429 = 0
-            for i, iid in enumerate(invoice_ids, 1):
-                progress(f"Trimitere factura {i} din {total}…")
-                try:
-                    send_local_invoice_to_oblio(repo, iid, client=client, dry_run=dry)
-                    sent += 1
-                    consecutive_429 = 0
-                except Exception as e:
-                    inv = repo.get_invoice(iid) or {}
-                    failed.append((inv.get("number") or str(iid), str(e)))
-                    if "429" in str(e) or "Too Many Requests" in str(e):
-                        consecutive_429 += 1
-                        if consecutive_429 >= 3:
-                            remaining = total - i
-                            if remaining:
-                                failed.append((
-                                    "⏸",
-                                    f"Oblio limitează cererile — m-am oprit; {remaining} facturi "
-                                    f"au rămas netrimise. Reîncearcă mai târziu cu "
-                                    f"„Trimite toate (vizibile, netrimise)”.",
-                                ))
-                            break
-                    else:
+            for i, iid in enumerate(to_send, 1):
+                progress(f"Trimitere factura {i} din {n}…")
+                attempts = 0
+                while True:
+                    try:
+                        send_local_invoice_to_oblio(repo, iid, client=client, dry_run=dry)
+                        sent += 1
                         consecutive_429 = 0
-                if i < total:
+                        break
+                    except Exception as e:
+                        # Oblio's "nu am putut descarca gestiunea" is a transient
+                        # backend failure (shows up under load), not a real stock
+                        # verdict — give it two more tries with a pause.
+                        if _TRANSIENT_OBLIO_FRAGMENT in str(e).lower() and attempts < 2:
+                            attempts += 1
+                            time.sleep(3.0)
+                            continue
+                        inv = repo.get_invoice(iid) or {}
+                        failed.append((inv.get("number") or str(iid), str(e)))
+                        if "429" in str(e) or "Too Many Requests" in str(e):
+                            consecutive_429 += 1
+                        else:
+                            consecutive_429 = 0
+                        break
+                if consecutive_429 >= 3:
+                    remaining = n - i
+                    if remaining:
+                        failed.append((
+                            "⏸",
+                            f"Oblio limitează cererile — m-am oprit; {remaining} facturi "
+                            f"au rămas netrimise. Reîncearcă mai târziu cu "
+                            f"„Trimite toate (vizibile, netrimise)”.",
+                        ))
+                    break
+                if i < n:
                     time.sleep(0.35)
-            return sent, failed
+            return sent, failed, held
 
         dlg = BusyDialog("Trimitere către Oblio", f"Trimitere 0 din {total}…", self)
         runner = TaskRunner(job, self)
@@ -610,9 +633,13 @@ class InvoicesView(QWidget):
 
         def on_done(payload):
             dlg.accept()
-            sent, failed = payload
+            sent, failed, held = payload
             verb = "DRY-RUN trimise" if dry else "trimise către Oblio"
             msg = f"{sent} {verb}."
+            if held:
+                details = "\n".join(f"  • {n}: {e[:160]}" for n, e in held[:8])
+                msg += (f"\n\n{len(held)} amânate (stoc insuficient în Oblio — "
+                        f"adaugă NIR și retrimite):\n{details}")
             if failed:
                 details = "\n".join(f"  • {n}: {e[:160]}" for n, e in failed[:10])
                 msg += f"\n\n{len(failed)} au eșuat:\n{details}"

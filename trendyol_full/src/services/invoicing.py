@@ -511,6 +511,108 @@ def _local_invoice_record(preview: InvoicePreview, series: str, number: str,
     }
 
 
+def plan_batch_stock(repo: Repo, client: OblioClient,
+                     invoice_ids: list[int]) -> tuple[list[int], list[tuple[str, str]]]:
+    """
+    Pre-flight stock check for a batch send.
+
+    Oblio enforces stock at issue time (no negative stock on this account), and a
+    batch can DRAIN a product mid-run: the first N invoices for a product pass,
+    the rest fail with "nu are stoc suficient" even though the product "had
+    stock" when the user checked. So: fetch live stock ONCE, walk the batch in
+    order budgeting per-product quantities, and hold back invoices that would
+    exceed what's available. Held invoices keep their draft + get a clear error
+    stamped; everything else sends normally.
+
+    Best-effort: if the stock snapshot can't be fetched, the whole batch is
+    declared sendable (Oblio remains the authority).
+
+    Returns (sendable_ids, held) where held = [(invoice_number, reason)].
+    """
+    log = get_app_logger()
+    try:
+        products = client.list_products()
+    except Exception as e:
+        log.warning("preflight-stock: could not fetch Oblio products (%s) — skipping check", e)
+        return list(invoice_ids), []
+
+    # Remaining stock budget, keyed by code and by name (lines may lack a code).
+    # Only Marfa products WITH a stock record participate — services and
+    # stockless records are Oblio's call.
+    # One budget entry per product; code/name lookups alias to the same entry so
+    # mixed matching can never double the available quantity.
+    budget: dict[str, float] = {}
+    label: dict[str, str] = {}
+    alias: dict[str, str] = {}
+    for p in products:
+        if (p.get("productType") or "") != "Marfa":
+            continue
+        stock = p.get("stock") or []
+        if not stock:
+            continue
+        qty = sum(float(s.get("quantity") or 0) for s in stock)
+        code = (p.get("code") or "").strip().lower()
+        name = (p.get("name") or "").strip()
+        canonical = f"c:{code}" if code else f"n:{name.lower()}"
+        budget[canonical] = qty
+        label[canonical] = name or code
+        if code:
+            alias[f"c:{code}"] = canonical
+        if name:
+            alias[f"n:{name.lower()}"] = canonical
+
+    def _budget_key(line: dict[str, Any]) -> str | None:
+        code = (line.get("oblio_code") or "").strip().lower()
+        if code and f"c:{code}" in alias:
+            return alias[f"c:{code}"]
+        name = (line.get("oblio_name") or "").strip().lower()
+        if name and f"n:{name}" in alias:
+            return alias[f"n:{name}"]
+        return None
+
+    sendable: list[int] = []
+    held: list[tuple[str, str]] = []
+    for iid in invoice_ids:
+        inv = repo.get_invoice(iid)
+        if not inv:
+            continue
+        try:
+            lines = (json.loads(inv.get("raw_response") or "{}").get("lines")) or []
+        except ValueError:
+            lines = []
+        # Which products would this invoice overdraw?
+        shortages: list[str] = []
+        needs: dict[str, float] = {}
+        for l in lines:
+            key = _budget_key(l)
+            if key is None:
+                continue
+            needs[key] = needs.get(key, 0.0) + float(l.get("quantity") or 0)
+        for key, need in needs.items():
+            if budget[key] - need < 0:
+                shortages.append(f"{label[key]} (necesar {need:g}, disponibil {max(budget[key], 0):g})")
+        if shortages:
+            msg = ("Amânată — stoc Oblio insuficient: " + "; ".join(shortages)
+                   + ". Adaugă NIR în Oblio și retrimite.")
+            repo.record_invoice_send_error(iid, msg)
+            held.append((inv.get("number") or str(iid), msg))
+            continue
+        # Reserve the stock for this invoice and let it through.
+        for key, need in needs.items():
+            budget[key] -= need
+        sendable.append(iid)
+
+    if held:
+        log.info("preflight-stock: holding back %d invoice(s) for insufficient stock", len(held))
+    return sendable, held
+
+
+# Oblio-side transient failure: the backend sometimes cannot load the gestiune
+# while under load and mislabels it as a stock problem. Retryable, unlike a
+# genuine "produsul X nu are stoc suficient" verdict.
+_TRANSIENT_OBLIO_FRAGMENT = "descarca gestiunea"
+
+
 def send_local_invoice_to_oblio(
     repo: Repo,
     invoice_id: int,
