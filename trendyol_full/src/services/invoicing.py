@@ -555,7 +555,10 @@ def plan_batch_stock(repo: Repo, client: OblioClient,
         name = (p.get("name") or "").strip()
         canonical = f"c:{code}" if code else f"n:{name.lower()}"
         budget[canonical] = qty
-        label[canonical] = name or code
+        # Include the code: Oblio catalogs accumulate near-identical duplicates
+        # ("PLITA JAPONEZA" / "PLITA JAPONEZA 32CM" / "… 32CM 2"), and the code
+        # is what tells the user WHICH one the invoice is actually mapped to.
+        label[canonical] = f"{name} [{code}]" if (name and code) else (name or code)
         if code:
             alias[f"c:{code}"] = canonical
         if name:
@@ -596,6 +599,9 @@ def plan_batch_stock(repo: Repo, client: OblioClient,
                    + ". Adaugă NIR în Oblio și retrimite.")
             repo.record_invoice_send_error(iid, msg)
             held.append((inv.get("number") or str(iid), msg))
+            # Timestamped proof of what Oblio's stock snapshot said at hold time —
+            # settles any later "but it HAD stock" question from app.log alone.
+            log.info("preflight-stock: HOLD %s: %s", inv.get("number"), msg)
             continue
         # Reserve the stock for this invoice and let it through.
         for key, need in needs.items():
