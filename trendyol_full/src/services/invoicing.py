@@ -512,7 +512,7 @@ def _local_invoice_record(preview: InvoicePreview, series: str, number: str,
 
 
 def plan_batch_stock(repo: Repo, client: OblioClient,
-                     invoice_ids: list[int]) -> tuple[list[int], list[tuple[str, str]]]:
+                     invoice_ids: list[int]) -> tuple[list[int], list[tuple[str, str]], str | None]:
     """
     Pre-flight stock check for a batch send.
 
@@ -525,16 +525,22 @@ def plan_batch_stock(repo: Repo, client: OblioClient,
     stamped; everything else sends normally.
 
     Best-effort: if the stock snapshot can't be fetched, the whole batch is
-    declared sendable (Oblio remains the authority).
+    declared sendable (Oblio remains the authority) and a warning is returned so
+    the user KNOWS the guard was off for this run.
 
-    Returns (sendable_ids, held) where held = [(invoice_number, reason)].
+    Returns (sendable_ids, held, warning) where held = [(invoice_number, reason)].
     """
     log = get_app_logger()
     try:
         products = client.list_products()
     except Exception as e:
         log.warning("preflight-stock: could not fetch Oblio products (%s) — skipping check", e)
-        return list(invoice_ids), []
+        # Loud warning instead of a silent skip: without it, stock errors surface
+        # at send time and nobody knows the guard was off for this batch.
+        return list(invoice_ids), [], (
+            "Nu am putut verifica stocul înainte de trimitere (Oblio limitează cererile) — "
+            "batch-ul s-a trimis FĂRĂ verificare de stoc; eventualele erori de stoc apar la trimitere."
+        )
 
     # Remaining stock budget, keyed by code and by name (lines may lack a code).
     # Only Marfa products WITH a stock record participate — services and
@@ -563,6 +569,10 @@ def plan_batch_stock(repo: Repo, client: OblioClient,
             alias[f"c:{code}"] = canonical
         if name:
             alias[f"n:{name.lower()}"] = canonical
+    # Untouched copy: hold messages must show Oblio's ACTUAL stock at snapshot
+    # time, not the leftover budget after the batch reserved from it — printing
+    # the leftover reads as "Oblio has zero" and causes endless confusion.
+    snapshot = dict(budget)
 
     def _budget_key(line: dict[str, Any]) -> str | None:
         code = (line.get("oblio_code") or "").strip().lower()
@@ -593,7 +603,13 @@ def plan_batch_stock(repo: Repo, client: OblioClient,
             needs[key] = needs.get(key, 0.0) + float(l.get("quantity") or 0)
         for key, need in needs.items():
             if budget[key] - need < 0:
-                shortages.append(f"{label[key]} (necesar {need:g}, disponibil {max(budget[key], 0):g})")
+                had = snapshot[key]
+                reserved = had - budget[key]
+                shortages.append(
+                    f"{label[key]}: factura cere {need:g} buc, Oblio avea {had:g} la verificare"
+                    + (f" din care {reserved:g} deja alocate facturilor anterioare din batch"
+                       if reserved > 0 else "")
+                )
         if shortages:
             msg = ("Amânată — stoc Oblio insuficient: " + "; ".join(shortages)
                    + ". Adaugă NIR în Oblio și retrimite.")
@@ -610,7 +626,7 @@ def plan_batch_stock(repo: Repo, client: OblioClient,
 
     if held:
         log.info("preflight-stock: holding back %d invoice(s) for insufficient stock", len(held))
-    return sendable, held
+    return sendable, held, None
 
 
 # Oblio-side transient failure: the backend sometimes cannot load the gestiune

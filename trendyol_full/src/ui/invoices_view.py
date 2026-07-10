@@ -580,10 +580,11 @@ class InvoicesView(QWidget):
             # (budgeted across the WHOLE batch, so a product drained mid-batch
             # is caught up front instead of failing halfway through).
             held: list[tuple[str, str]] = []
+            warning = None
             to_send = invoice_ids
             if not dry:
                 progress("Verific stocul în Oblio…")
-                to_send, held = plan_batch_stock(repo, client, invoice_ids)
+                to_send, held, warning = plan_batch_stock(repo, client, invoice_ids)
 
             n = len(to_send)
             sent = 0
@@ -625,7 +626,7 @@ class InvoicesView(QWidget):
                     break
                 if i < n:
                     time.sleep(0.35)
-            return sent, failed, held
+            return sent, failed, held, warning
 
         dlg = BusyDialog("Trimitere către Oblio", f"Trimitere 0 din {total}…", self)
         runner = TaskRunner(job, self)
@@ -633,9 +634,11 @@ class InvoicesView(QWidget):
 
         def on_done(payload):
             dlg.accept()
-            sent, failed, held = payload
+            sent, failed, held, warning = payload
             verb = "DRY-RUN trimise" if dry else "trimise către Oblio"
             msg = f"{sent} {verb}."
+            if warning:
+                msg += f"\n\n⚠ {warning}"
             if held:
                 details = "\n".join(f"  • {n}: {e[:160]}" for n, e in held[:8])
                 msg += (f"\n\n{len(held)} amânate (stoc insuficient în Oblio — "
