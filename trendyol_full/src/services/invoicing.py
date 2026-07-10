@@ -22,7 +22,9 @@ INVOICEABLE_STATUSES = INVOICEABLE_TRENDYOL_STATUSES
 # rev 3: billing address (invoiceAddress) preferred over shipment; Bucharest
 #        rule (județ=București, localitate=Sector N).
 # rev 4: Bucharest orders without a sector get a stable pseudo-random Sector 1-6.
-BUILDER_REV = "4"
+# rev 5: mapping resolution handles duplicate listing rows (twin-aware); rebuild
+#        all drafts once so lines reflect the twin-aware resolution.
+BUILDER_REV = "5"
 
 
 def _build_sig(repo: Repo, order_fetched_at: str | None) -> str:

@@ -450,40 +450,47 @@ class Repo:
         """
         conn = get_conn()
 
-        def find_listing_id_by(column: str, value: str) -> int | None:
-            row = conn.execute(
-                f"SELECT id FROM trendyol_listings WHERE {column} = ? LIMIT 1",
-                (value,),
-            ).fetchone()
-            return row["id"] if row else None
-
-        listing_id: int | None = None
-        if self._is_usable_key(product_main_id):
-            listing_id = find_listing_id_by("product_main_id", str(product_main_id))
-        if listing_id is None and self._is_usable_key(barcode):
-            listing_id = find_listing_id_by("barcode", str(barcode))
-        if listing_id is None and self._is_usable_key(stock_code):
-            listing_id = find_listing_id_by("stock_code", str(stock_code))
-        if listing_id is None:
+        # Collect EVERY listing row matching any identifier, strongest key first.
+        # Historic syncs can leave duplicate rows for the same physical product
+        # (e.g. two rows sharing a barcode); with the old LIMIT-1 lookup, a
+        # mapping edited on one twin was invisible when order lines resolved to
+        # the other — the classic "I remapped it but it still uses the old
+        # product" bug. Now the first candidate that actually HAS a mapping wins,
+        # in deterministic id order.
+        candidate_ids: list[int] = []
+        for column, value in (("product_main_id", product_main_id),
+                              ("barcode", barcode),
+                              ("stock_code", stock_code)):
+            if not self._is_usable_key(value):
+                continue
+            for row in conn.execute(
+                f"SELECT id FROM trendyol_listings WHERE {column} = ? ORDER BY id",
+                (str(value),),
+            ).fetchall():
+                if row["id"] not in candidate_ids:
+                    candidate_ids.append(row["id"])
+        if not candidate_ids:
             return []
 
-        # Bundle first (deterministic order so the last-row rounding remainder is stable).
-        rows = conn.execute(
-            "SELECT op.*, bm.vat_percent AS override_vat, bm.units_per_listing AS units_per_listing "
-            "FROM bundle_mappings bm JOIN oblio_products op ON op.id = bm.oblio_product_id "
-            "WHERE bm.trendyol_listing_id = ? ORDER BY bm.id",
-            (listing_id,),
-        ).fetchall()
-        if rows:
-            return [dict(r) for r in rows]
-        # Fallback: variant (at most one row).
-        rows = conn.execute(
-            "SELECT op.*, vm.vat_percent AS override_vat, vm.units_per_listing AS units_per_listing "
-            "FROM variant_mappings vm JOIN oblio_products op ON op.id = vm.oblio_product_id "
-            "WHERE vm.trendyol_listing_id = ? LIMIT 1",
-            (listing_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        for listing_id in candidate_ids:
+            # Bundle first (deterministic order so the last-row rounding remainder is stable).
+            rows = conn.execute(
+                "SELECT op.*, bm.vat_percent AS override_vat, bm.units_per_listing AS units_per_listing "
+                "FROM bundle_mappings bm JOIN oblio_products op ON op.id = bm.oblio_product_id "
+                "WHERE bm.trendyol_listing_id = ? ORDER BY bm.id",
+                (listing_id,),
+            ).fetchall()
+            if rows:
+                return [dict(r) for r in rows]
+            rows = conn.execute(
+                "SELECT op.*, vm.vat_percent AS override_vat, vm.units_per_listing AS units_per_listing "
+                "FROM variant_mappings vm JOIN oblio_products op ON op.id = vm.oblio_product_id "
+                "WHERE vm.trendyol_listing_id = ? LIMIT 1",
+                (listing_id,),
+            ).fetchall()
+            if rows:
+                return [dict(r) for r in rows]
+        return []
 
     # Back-compat shim — older callers expect a single dict or None.
     def resolve_line_mapping(self, barcode: str | None, stock_code: str | None,

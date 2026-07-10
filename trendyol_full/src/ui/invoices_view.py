@@ -572,9 +572,19 @@ class InvoicesView(QWidget):
 
         def job(progress):
             import time
-            from src.services.invoicing import _TRANSIENT_OBLIO_FRAGMENT, plan_batch_stock
+            from src.services.invoicing import (
+                _TRANSIENT_OBLIO_FRAGMENT, plan_batch_stock, refresh_local_drafts,
+            )
             from src.services.sync import build_oblio_client
             client = build_oblio_client(repo)
+
+            # Rebuild any draft whose inputs changed (mapping edits, remaps…)
+            # BEFORE the stock check reads the stored lines. Without this, a
+            # remap done seconds ago is invisible to pre-flight until the next
+            # poller tick — the batch would budget/hold against the OLD product.
+            # Incremental: costs ~nothing when nothing changed.
+            progress("Actualizez facturile după mapările curente…")
+            refresh_local_drafts(repo)
 
             # Pre-flight: hold back invoices the live Oblio stock can't cover
             # (budgeted across the WHOLE batch, so a product drained mid-batch
