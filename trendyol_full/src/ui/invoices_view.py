@@ -45,6 +45,8 @@ def _status_pill(row: dict) -> tuple[str, str, str] | None:
         return (s, *PILL_GREEN)
     if s == "UnDelivered":
         return (s, *PILL_AMBER)
+    if s == "Returned":
+        return (s, *PILL_RED)
     return (s, *PILL_GREY)
 
 
@@ -96,6 +98,13 @@ class _InvoicesModel(DictRowsModel):
 
     def checked_ids(self) -> set[int]:
         return set(self._checked)
+
+    def check_all_unsent(self) -> int:
+        """Tick every checkable (unsent) row. Returns how many are now checked."""
+        self.beginResetModel()
+        self._checked = {r["id"] for r in self._rows if self._is_unsent(r) and r.get("id")}
+        self.endResetModel()
+        return len(self._checked)
 
     def _is_unsent(self, row: dict) -> bool:
         return not bool(row.get("oblio_link"))
@@ -414,9 +423,10 @@ class InvoicesView(QWidget):
             d = (r.get("order_date") or r.get("issued_at") or "")
             return d >= cutoff_iso
 
-        # Always-on filter: only show invoices for orders in Shipped/Delivered.
-        # Earlier statuses (Picking/Invoiced/etc.) and terminal-but-cancelled ones
-        # (Cancelled/Returned/etc.) never appear here.
+        # Always-on filter: only show invoices for orders whose status means the
+        # goods actually shipped (see INVOICEABLE_TRENDYOL_STATUSES — includes
+        # Returned, invoiced with the storno handled in Oblio). Pre-shipment
+        # statuses (Created/Picking/Invoiced) and Cancelled never appear here.
         def is_invoiceable(r: dict) -> bool:
             return (r.get("order_status") or "").strip() in INVOICEABLE_TRENDYOL_STATUSES
 
@@ -462,7 +472,7 @@ class InvoicesView(QWidget):
         self.chip_hidden.setText(f"{hidden_total} ascunse")
         self.chip_hidden.setVisible(hidden_total > 0)
         self.chip_hidden.setToolTip(
-            f"{hidden_off_status} — status diferit de Shipped/Delivered\n"
+            f"{hidden_off_status} — status ne-facturabil (ex. Created/Picking/Cancelled)\n"
             f"{hidden_external} — facturate extern (link deja pe Trendyol)\n"
             f"{hidden_by_sent_filter} — deja trimise (filtrul de mai sus)"
         )
@@ -537,22 +547,16 @@ class InvoicesView(QWidget):
         self._do_send([data["id"]])
 
     def _send_all_visible(self) -> None:
+        """Enter select-mode with every unsent visible invoice PRE-CHECKED, so the
+        user can uncheck stragglers before hitting the green Send. Same review
+        flow as 'Trimite mai multe facturi', just starting from all-selected."""
         unsent = [r for r in self._visible_rows if not r.get("oblio_link")]
         if not unsent:
             QMessageBox.information(self, "Nimic de trimis",
                                     "Toate facturile vizibile au fost deja trimise către Oblio.")
             return
-        dry = self.repo.oblio_dry_run()
-        verb = "DRY-RUN" if dry else "trimite"
-        ok = QMessageBox.question(
-            self, "Confirmă trimiterea",
-            f"Vrei să {verb} {len(unsent)} facturi către Oblio?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if ok != QMessageBox.StandardButton.Yes:
-            return
-        self._do_send([r["id"] for r in unsent])
+        self._enter_multi_mode()
+        self._model.check_all_unsent()
 
     def _do_send(self, invoice_ids: list[int]) -> None:
         """

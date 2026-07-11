@@ -143,8 +143,8 @@ RO: dict[str, str] = {
     # ---- Invoices tab ----
     "Auto-created from Trendyol orders that are Shipped or Delivered, with all lines mapped. "
     "Double-click a row to see the lines (Trendyol title → Oblio product substitution).":
-        "Create automat din comenzile Trendyol expediate (Shipped/Delivered/AtCollectionPoint/UnDelivered), "
-        "cu toate liniile mapate. Dublu-click pe o linie pentru a vedea conținutul.",
+        "Create automat din comenzile Trendyol expediate (Shipped/Delivered/AtCollectionPoint/"
+        "UnDelivered/Returned), cu toate liniile mapate. Dublu-click pe o linie pentru a vedea conținutul.",
     "Last 30 days": "Ultimele 30 zile",
     "Last 60 days": "Ultimele 60 zile",
     "Last 90 days": "Ultimele 90 zile",

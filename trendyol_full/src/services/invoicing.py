@@ -320,9 +320,9 @@ def _detect_shipping(raw: dict[str, Any]) -> float:
 def auto_create_local_invoices(repo: Repo) -> tuple[int, int]:
     """
     For every pending order with all lines mapped AND a dispatched status
-    (Shipped, AtCollectionPoint, Delivered — see INVOICEABLE_TRENDYOL_STATUSES),
-    create a LOCAL invoice (no Oblio POST) using Oblio product names/codes/VAT in
-    place of the raw Trendyol line data.
+    (Shipped, AtCollectionPoint, Delivered, UnDelivered, Returned — see
+    INVOICEABLE_TRENDYOL_STATUSES), create a LOCAL invoice (no Oblio POST) using
+    Oblio product names/codes/VAT in place of the raw Trendyol line data.
 
     Earlier statuses (Created, Picking, ...) are skipped — the order may still be
     cancelled before shipping, and we don't want to issue invoices we'd have to

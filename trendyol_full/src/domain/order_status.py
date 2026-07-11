@@ -42,6 +42,9 @@ INVOICEABLE_TRENDYOL_STATUSES: frozenset[str] = frozenset({
     TrendyolStatus.ATCOLLECTIONPOINT.value,
     TrendyolStatus.DELIVERED.value,
     TrendyolStatus.UNDELIVERED.value,
+    # Returned: the goods shipped (taxable event) even if they came back —
+    # user invoices these too and handles the storno in Oblio.
+    TrendyolStatus.RETURNED.value,
 })
 
 
