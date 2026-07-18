@@ -46,12 +46,16 @@ jobs:
       - name: Show dist contents
         run: Get-ChildItem dist -Recurse | Select-Object FullName, Length
 
+      # continue-on-error: a full artifact-storage quota must never block the
+      # Release step below — the Release upload is separate from Actions storage.
       - name: Upload artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: JudetExport-${{ github.sha }}.exe
           path: judet_fix/dist/JudetExport.exe
           if-no-files-found: error
+          retention-days: 7
 
       - name: Attach to GitHub Release (tag pushes only)
         if: startsWith(github.ref, 'refs/tags/v')
