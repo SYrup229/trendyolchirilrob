@@ -41,6 +41,8 @@ RO: dict[str, str] = {
     "Save": "Salvează",
     "Cancel": "Anulează",
     "Close": "Închide",
+    "Copy": "Copiază",
+    "Copy row": "Copiază rândul",
     "Yes": "Da",
     "No": "Nu",
     "OK": "OK",

@@ -21,7 +21,8 @@ from src.storage.repo import Repo
 from src.ui.bundles_view import _OblioPickerDialog
 from src.ui.models import DictRowsModel
 from src.ui.widgets import (
-    PILL_AMBER, PILL_GREEN, PillDelegate, attach_search_debounce, polish_table,
+    PILL_AMBER, PILL_GREEN, PillDelegate, attach_search_debounce, enable_cell_copy,
+    polish_table,
 )
 
 
@@ -89,6 +90,7 @@ class TrendyolProductsView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         polish_table(self.table)
+        enable_cell_copy(self.table)
         self.table.setItemDelegateForColumn(4, PillDelegate(_status_pill, self.table))
         self.table.doubleClicked.connect(self._on_double_clicked)
 
@@ -269,6 +271,7 @@ class _VariantOblioPicker(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        enable_cell_copy(self.table)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)

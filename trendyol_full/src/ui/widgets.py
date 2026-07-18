@@ -1,12 +1,13 @@
 import traceback
 
 from PySide6.QtCore import QModelIndex, QObject, QRect, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QLabel, QProgressBar, QStyle, QStyledItemDelegate,
+    QApplication, QDialog, QLabel, QMenu, QProgressBar, QStyle, QStyledItemDelegate,
     QStyleOptionViewItem, QTableView, QVBoxLayout,
 )
 
+from src.i18n import t
 from src.logging_setup import get_app_logger
 
 
@@ -87,6 +88,47 @@ def polish_table(table: QTableView, row_height: int = 28) -> None:
     table.setWordWrap(False)
     table.verticalHeader().setVisible(False)
     table.verticalHeader().setDefaultSectionSize(row_height)
+
+
+def enable_cell_copy(table: QTableView) -> None:
+    """Copy support for the read-only tables: right-click a cell for a
+    Copiază / Copiază rândul menu, and Ctrl+C copies the current cell. Qt views
+    with NoEditTriggers offer no text selection at all, so this is the copy path."""
+    def cell_text(index: QModelIndex) -> str:
+        value = index.data(Qt.ItemDataRole.DisplayRole) if index.isValid() else None
+        return "" if value is None else str(value)
+
+    def row_text(index: QModelIndex) -> str:
+        model = table.model()
+        cells = (
+            cell_text(model.index(index.row(), col))
+            for col in range(model.columnCount())
+            if not table.isColumnHidden(col)
+        )
+        return "\t".join(cells).strip()
+
+    def to_clipboard(text: str) -> None:
+        if text:
+            QApplication.clipboard().setText(text)
+
+    def show_menu(pos) -> None:
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return
+        menu = QMenu(table)
+        copy_cell = menu.addAction(t("Copy"))
+        copy_row = menu.addAction(t("Copy row"))
+        chosen = menu.exec(table.viewport().mapToGlobal(pos))
+        if chosen is copy_cell:
+            to_clipboard(cell_text(index))
+        elif chosen is copy_row:
+            to_clipboard(row_text(index))
+
+    table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    table.customContextMenuRequested.connect(show_menu)
+    shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Copy), table)
+    shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+    shortcut.activated.connect(lambda: to_clipboard(cell_text(table.currentIndex())))
 
 
 class BusyDialog(QDialog):

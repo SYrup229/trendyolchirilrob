@@ -9,7 +9,8 @@ from src.i18n import t
 from src.storage.repo import Repo
 from src.ui.models import DictRowsModel
 from src.ui.widgets import (
-    PILL_GREEN, PILL_GREY, PillDelegate, attach_search_debounce, polish_table,
+    PILL_GREEN, PILL_GREY, PillDelegate, attach_search_debounce, enable_cell_copy,
+    polish_table,
 )
 
 
@@ -84,6 +85,7 @@ class MappingView(QWidget):
         self.products_table.setSortingEnabled(True)
         self.products_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         polish_table(self.products_table)
+        enable_cell_copy(self.products_table)
         self.products_table.setItemDelegateForColumn(3, PillDelegate(_linked_pill, self.products_table))
         self.products_table.doubleClicked.connect(self._open_pair_dialog)
         # Reload right pane when selection changes — selectionModel exists after setModel.
@@ -103,6 +105,7 @@ class MappingView(QWidget):
         )
         self.mappings_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.mappings_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        enable_cell_copy(self.mappings_table)
         self.mappings_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.mappings_table.setColumnWidth(2, 80)
         self.mappings_table.setColumnWidth(3, 90)
@@ -321,6 +324,7 @@ class PairDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["", t("Title"), t("Barcode"), "Brand"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        enable_cell_copy(self.table)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)

@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 
 from src.services.invoicing import InvoicePreview, auto_create_local_invoices, build_preview
 from src.storage.repo import Repo
+from src.ui.widgets import enable_cell_copy
 
 
 class OrdersView(QWidget):
@@ -41,6 +42,7 @@ class OrdersView(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        enable_cell_copy(self.table)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.doubleClicked.connect(self._open_details)
 
@@ -139,10 +141,12 @@ class OrderDetailsDialog(QDialog):
         )
         top.setTextFormat(Qt.TextFormat.RichText)
         top.setWordWrap(True)
+        top.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         table = QTableWidget(len(preview.lines), 6)
         table.setHorizontalHeaderLabels(["Trendyol listing", "Oblio product", "Qty", "Unit price", "VAT%", "Line total"])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        enable_cell_copy(table)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for row, l in enumerate(preview.lines):

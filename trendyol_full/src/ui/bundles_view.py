@@ -17,7 +17,8 @@ from src.i18n import t
 from src.storage.repo import Repo
 from src.ui.models import DictRowsModel
 from src.ui.widgets import (
-    PILL_GREEN, PILL_GREY, PillDelegate, attach_search_debounce, polish_table,
+    PILL_GREEN, PILL_GREY, PillDelegate, attach_search_debounce, enable_cell_copy,
+    polish_table,
 )
 
 
@@ -86,6 +87,7 @@ class BundlesView(QWidget):
         self.listings_table.setSortingEnabled(True)
         self.listings_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         polish_table(self.listings_table)
+        enable_cell_copy(self.listings_table)
         self.listings_table.setItemDelegateForColumn(
             3, PillDelegate(_components_pill, self.listings_table))
         self.listings_table.selectionModel().selectionChanged.connect(self._reload_components_for_selected)
@@ -97,6 +99,7 @@ class BundlesView(QWidget):
         )
         self.components_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.components_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        enable_cell_copy(self.components_table)
         self.components_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.components_table.setColumnWidth(2, 80)
         self.components_table.setAlternatingRowColors(True)
@@ -280,6 +283,7 @@ class _OblioPickerDialog(QDialog):
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["", t("Code"), t("Name"), t("Unit")])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        enable_cell_copy(self.table)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)

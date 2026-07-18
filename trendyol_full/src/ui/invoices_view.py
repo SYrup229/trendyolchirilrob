@@ -20,7 +20,7 @@ from src.storage.repo import Repo
 from src.ui.models import DictRowsModel
 from src.ui.widgets import (
     PILL_AMBER, PILL_BLUE, PILL_GREEN, PILL_GREY, PILL_INDIGO, PILL_RED, BusyDialog,
-    PillDelegate, TaskRunner, polish_table,
+    PillDelegate, TaskRunner, enable_cell_copy, polish_table,
 )
 
 
@@ -291,6 +291,7 @@ class InvoicesView(QWidget):
         self.table.setColumnHidden(0, True)  # hidden until "send multiple" mode is entered
         self.table.doubleClicked.connect(self._on_double_clicked)
         polish_table(self.table)
+        enable_cell_copy(self.table)
         # Badge rendering for the state-ish columns.
         self.table.setItemDelegateForColumn(1, PillDelegate(_source_pill, self.table))
         self.table.setItemDelegateForColumn(6, PillDelegate(_status_pill, self.table))
@@ -832,6 +833,7 @@ class LocalInvoiceDialog(QDialog):
         )
         top.setTextFormat(Qt.TextFormat.RichText)
         top.setWordWrap(True)
+        top.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         lines = record.get("lines") or []
         currency = record.get("currency") or ""
@@ -850,6 +852,7 @@ class LocalInvoiceDialog(QDialog):
             "Cant.", "Preț unitar", "TVA%", "Total linie",
         ])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        enable_cell_copy(table)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         for row, r in enumerate(table_rows):

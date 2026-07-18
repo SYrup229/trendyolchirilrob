@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 
 from src.i18n import t
 from src.services import campaign_rebase as cr
-from src.ui.widgets import BusyDialog, TaskRunner
+from src.ui.widgets import BusyDialog, TaskRunner, enable_cell_copy
 
 
 class CampaignRebaseView(QWidget):
@@ -107,6 +107,7 @@ class CampaignRebaseView(QWidget):
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        enable_cell_copy(self.table)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
