@@ -244,9 +244,22 @@ def build_preview(repo: Repo, order_id: int) -> InvoicePreview:
             invoice_qty = order_qty * buc
             if invoice_qty <= 0:
                 invoice_qty = 1
+            # Work in whole bani. A line total that doesn't divide by the quantity
+            # (76.70 / 4 = 19.175) has no exact 2-decimal unit price, and rounding
+            # the unit price then multiplying back drifts the total over OR under.
+            # So round the LIST unit price UP and let the discount — sent to Oblio
+            # as one line-level amount — absorb the remainder:
+            # list × qty − discount == line_share exactly, and discount stays ≥ 0.
+            paid_cents = round(line_share * 100)
+            list_total_cents = paid_cents + max(round(disc_share * 100), 0)
+            list_unit_cents = -(-list_total_cents // invoice_qty)
+            disc_line_cents = list_unit_cents * invoice_qty - paid_cents
+
             unit_price_gross = round(line_share / invoice_qty, 2)
-            discount_per_unit = round(disc_share / invoice_qty, 2)
-            list_unit_price_gross = round(unit_price_gross + discount_per_unit, 2)
+            # Unrounded on purpose: the Oblio payload multiplies it back by qty
+            # and rounds to 2 decimals, which must land exactly on disc_line_cents.
+            discount_per_unit = disc_line_cents / 100 / invoice_qty
+            list_unit_price_gross = list_unit_cents / 100
 
             vat = country_vat
             override = m.get("override_vat")
@@ -255,7 +268,7 @@ def build_preview(repo: Repo, order_id: int) -> InvoicePreview:
             elif m.get("vat_percent") is not None:
                 vat = float(m["vat_percent"])
 
-            line_total = round(unit_price_gross * invoice_qty, 2)
+            line_total = paid_cents / 100
             total_gross += line_total
             lines.append(InvoicePreviewLine(
                 listing_title=title,
