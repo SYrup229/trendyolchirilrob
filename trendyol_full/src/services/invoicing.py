@@ -24,7 +24,9 @@ INVOICEABLE_STATUSES = INVOICEABLE_TRENDYOL_STATUSES
 # rev 4: Bucharest orders without a sector get a stable pseudo-random Sector 1-6.
 # rev 5: mapping resolution handles duplicate listing rows (twin-aware); rebuild
 #        all drafts once so lines reflect the twin-aware resolution.
-BUILDER_REV = "5"
+# rev 6: price split works in whole bani (list rounded up, discount absorbs the
+#        remainder); rebuild drafts totalled with the old per-unit rounding.
+BUILDER_REV = "6"
 
 
 def _build_sig(repo: Repo, order_fetched_at: str | None) -> str:
