@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.i18n import t
-from src.domain.order_status import INVOICEABLE_TRENDYOL_STATUSES
+from src.domain.order_status import INVOICES_VIEW_STATUS_CHOICES, OTHER_STATUSES
 from src.services.invoice_export import export_invoice_html, suggested_filename
 from src.services.invoicing import notify_trendyol_of_invoice, send_local_invoice_to_oblio
 from src.storage.repo import Repo
@@ -424,12 +424,19 @@ class InvoicesView(QWidget):
             d = (r.get("order_date") or r.get("issued_at") or "")
             return d >= cutoff_iso
 
-        # Always-on filter: only show invoices for orders whose status means the
-        # goods actually shipped (see INVOICEABLE_TRENDYOL_STATUSES — includes
-        # Returned, invoiced with the storno handled in Oblio). Pre-shipment
-        # statuses (Created/Picking/Invoiced) and Cancelled never appear here.
-        def is_invoiceable(r: dict) -> bool:
-            return (r.get("order_status") or "").strip() in INVOICEABLE_TRENDYOL_STATUSES
+        # Always-on filter: only show invoices for orders whose status is ticked in
+        # Settings → "Statusuri afișate în Facturi". The default is the statuses
+        # where the goods actually shipped (INVOICEABLE_TRENDYOL_STATUSES — incl.
+        # Returned, invoiced with the storno handled in Oblio). A status outside the
+        # known list shows only when "Other" is ticked. "Send all" sends what's
+        # shown, so ticking a status also makes its invoices sendable.
+        visible_statuses = self.repo.invoices_visible_statuses()
+
+        def is_status_shown(r: dict) -> bool:
+            s = (r.get("order_status") or "").strip()
+            if s in INVOICES_VIEW_STATUS_CHOICES:
+                return s in visible_statuses
+            return OTHER_STATUSES in visible_statuses
 
         # Hide rows for orders that already have a Trendyol-side invoiceLink unless
         # we own the link (i.e. WE successfully POSTed it via seller-invoice-links).
@@ -447,20 +454,20 @@ class InvoicesView(QWidget):
 
         rows = [
             r for r in self._all_rows
-            if in_range(r) and is_invoiceable(r) and not_externally_invoiced(r)
+            if in_range(r) and is_status_shown(r) and not_externally_invoiced(r)
             and passes_sent_filter(r)
         ]
         self._visible_rows = rows
-        hidden_off_status = sum(1 for r in self._all_rows if not is_invoiceable(r))
+        hidden_off_status = sum(1 for r in self._all_rows if not is_status_shown(r))
         hidden_external = sum(
             1 for r in self._all_rows
-            if is_invoiceable(r) and not not_externally_invoiced(r)
+            if is_status_shown(r) and not not_externally_invoiced(r)
         )
         n_sent = sum(1 for r in rows if (r.get("oblio_link") or "").strip())
         n_unsent = len(rows) - n_sent
         hidden_by_sent_filter = sum(
             1 for r in self._all_rows
-            if in_range(r) and is_invoiceable(r) and not_externally_invoiced(r)
+            if in_range(r) and is_status_shown(r) and not_externally_invoiced(r)
             and not passes_sent_filter(r)
         )
         hidden_total = hidden_off_status + hidden_external + hidden_by_sent_filter
@@ -473,7 +480,7 @@ class InvoicesView(QWidget):
         self.chip_hidden.setText(f"{hidden_total} ascunse")
         self.chip_hidden.setVisible(hidden_total > 0)
         self.chip_hidden.setToolTip(
-            f"{hidden_off_status} — status ne-facturabil (ex. Created/Picking/Cancelled)\n"
+            f"{hidden_off_status} — status nebifat în Setări (ex. Created/Picking/Cancelled)\n"
             f"{hidden_external} — facturate extern (link deja pe Trendyol)\n"
             f"{hidden_by_sent_filter} — deja trimise (filtrul de mai sus)"
         )

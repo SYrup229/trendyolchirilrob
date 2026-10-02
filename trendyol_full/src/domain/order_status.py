@@ -13,6 +13,8 @@ from enum import StrEnum
 
 
 class TrendyolStatus(StrEnum):
+    AWAITING = "Awaiting"       # payment not yet confirmed — don't act until Created
+    VERIFIED = "Verified"       # documented by Trendyol the same as Awaiting
     CREATED = "Created"
     PICKING = "Picking"
     INVOICED = "Invoiced"       # Trendyol's own field, not our state
@@ -46,6 +48,31 @@ INVOICEABLE_TRENDYOL_STATUSES: frozenset[str] = frozenset({
     # user invoices these too and handles the storno in Oblio.
     TrendyolStatus.RETURNED.value,
 })
+
+
+# Statuses offered in Settings → "Statusuri afișate în Facturi": every status
+# Trendyol International documents, in lifecycle order. Which ones the Invoices
+# tab shows is a per-install setting that defaults to INVOICEABLE_TRENDYOL_STATUSES
+# (the tab's original behaviour); it never changes which orders get an invoice.
+INVOICES_VIEW_STATUS_CHOICES: tuple[str, ...] = (
+    TrendyolStatus.AWAITING.value,
+    TrendyolStatus.VERIFIED.value,
+    TrendyolStatus.CREATED.value,
+    TrendyolStatus.PICKING.value,
+    TrendyolStatus.INVOICED.value,
+    TrendyolStatus.SHIPPED.value,
+    TrendyolStatus.ATCOLLECTIONPOINT.value,
+    TrendyolStatus.DELIVERED.value,
+    TrendyolStatus.UNDELIVERED.value,
+    TrendyolStatus.RETURNED.value,
+    TrendyolStatus.CANCELLED.value,
+    TrendyolStatus.UNSUPPLIED.value,
+    TrendyolStatus.UNPACKED.value,
+)
+
+# Setting token for "any status NOT in the list above" (a status Trendyol adds
+# later, or our own "Unknown" fallback). Can't collide with a real status name.
+OTHER_STATUSES = "__other__"
 
 
 class InvoiceState(StrEnum):

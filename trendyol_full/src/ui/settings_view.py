@@ -4,14 +4,15 @@ import sys
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
+    QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from src.config import (
     DEFAULT_INVOICE_CURRENCY, DEFAULT_INVOICE_LANGUAGE, DEFAULT_INVOICE_SERIES,
     DEFAULT_POLL_SECONDS, DEFAULT_VAT_PERCENT,
 )
+from src.domain.order_status import INVOICES_VIEW_STATUS_CHOICES, OTHER_STATUSES
 from src.i18n import t
 from src.logging_setup import log_dir
 from src.services import sync as sync_svc
@@ -23,6 +24,7 @@ class SettingsView(QWidget):
     poll_changed = Signal()
     data_synced = Signal()       # fired after Oblio/Trendyol re-sync completes
     mappings_reset = Signal(int) # fired after wiping mappings; payload = # removed
+    invoice_statuses_changed = Signal()  # Invoices-tab status selection saved
 
     def __init__(self, repo: Repo):
         super().__init__()
@@ -102,6 +104,37 @@ class SettingsView(QWidget):
         form.addRow(t("Reg Com / IBAN / phone (optional)"), self.company_extra)
         form.addRow("", self.oblio_dry_run)
 
+        # --- statuses shown in the Invoices tab ---
+        # Only filters what the Invoices tab lists (and therefore what "Send all"
+        # sends); which orders get an invoice at all is unchanged.
+        status_label = QLabel("Statusuri afișate în Facturi")
+        status_label.setObjectName("title")
+        status_hint = QLabel(
+            "Tabul Facturi arată facturile comenzilor cu statusurile bifate, iar "
+            "„Trimite toate (vizibile, netrimise)” le trimite pe cele afișate. "
+            "Implicit: Shipped, AtCollectionPoint, Delivered, UnDelivered, Returned."
+        )
+        status_hint.setObjectName("subtitle")
+        status_hint.setWordWrap(True)
+
+        self.status_checks: dict[str, QCheckBox] = {}
+        status_grid = QGridLayout()
+        for i, status in enumerate(INVOICES_VIEW_STATUS_CHOICES):
+            chk = QCheckBox(status)
+            self.status_checks[status] = chk
+            status_grid.addWidget(chk, i // 5, i % 5)
+        status_other = QCheckBox("Other")
+        status_other.setToolTip("Orice status care nu e în lista de mai sus "
+                                "(ex. un status nou introdus de Trendyol).")
+        self.status_checks[OTHER_STATUSES] = status_other
+        other_warn = QLabel("Experimental, a nu se folosi decat la nevoie si dupa discutat cu Rob")
+        other_warn.setObjectName("badge-warn")
+        other_row = QHBoxLayout()
+        other_row.addWidget(status_other)
+        other_row.addWidget(other_warn)
+        other_row.addStretch(1)
+        self._load_status_checks()
+
         # --- sync buttons ---
         sync_label = QLabel(t("Re-sync data"))
         sync_label.setObjectName("title")
@@ -168,10 +201,20 @@ class SettingsView(QWidget):
         danger_row.addWidget(btn_reset_mappings)
         danger_row.addStretch(1)
 
-        layout = QVBoxLayout(self)
+        # The page lives in a scroll area: with the status checkboxes it's taller
+        # than small laptop screens, and unscrolled it would force the whole
+        # window taller than the screen.
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(16, 12, 16, 12)
         layout.addWidget(title)
         layout.addLayout(form)
+        layout.addSpacing(12)
+        layout.addWidget(status_label)
+        layout.addWidget(status_hint)
+        layout.addLayout(status_grid)
+        layout.addLayout(other_row)
+        layout.addSpacing(8)
         layout.addWidget(save_btn)
         layout.addSpacing(20)
         layout.addWidget(sync_label)
@@ -188,6 +231,19 @@ class SettingsView(QWidget):
         layout.addLayout(danger_row)
         layout.addStretch(1)
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+
+    def _load_status_checks(self) -> None:
+        shown = self.repo.invoices_visible_statuses()
+        for status, chk in self.status_checks.items():
+            chk.setChecked(status in shown)
+
     def refresh(self) -> None:
         self.poll.setValue(int(self.repo.poll_seconds()))
         self.vat.setValue(float(self.repo.default_vat()))
@@ -203,6 +259,7 @@ class SettingsView(QWidget):
         self.company_address.setText(self.repo.get_setting("company_address") or "")
         self.company_extra.setText(self.repo.get_setting("company_extra") or "")
         self.oblio_dry_run.setChecked(self.repo.oblio_dry_run())
+        self._load_status_checks()
 
     def _save(self) -> None:
         repo = self.repo
@@ -218,8 +275,16 @@ class SettingsView(QWidget):
         repo.set_setting("company_address", self.company_address.text().strip())
         repo.set_setting("company_extra", self.company_extra.text().strip())
         repo.set_setting("oblio_dry_run", "1" if self.oblio_dry_run.isChecked() else "0")
+        # Only stored once actually changed, so an untouched install keeps
+        # following the built-in default instead of a frozen copy of it.
+        statuses = {s for s, chk in self.status_checks.items() if chk.isChecked()}
+        status_changed = statuses != repo.invoices_visible_statuses()
+        if status_changed:
+            repo.set_invoices_visible_statuses(statuses)
         if self.poll.value() != prev_poll:
             self.poll_changed.emit()
+        if status_changed:
+            self.invoice_statuses_changed.emit()
         QMessageBox.information(self, "Salvat", "Setările au fost salvate.")
 
     def _sync_oblio(self) -> None:

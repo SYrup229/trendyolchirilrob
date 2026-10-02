@@ -94,6 +94,9 @@ class MainWindow(QMainWindow):
         self.settings_view.data_synced.connect(self._on_data_synced)
         # Reset-all-mappings from Settings → kill local invoices + refresh.
         self.settings_view.mappings_reset.connect(self._on_mappings_reset)
+        # Invoices-tab status selection saved → re-filter the tab on next view.
+        self.settings_view.invoice_statuses_changed.connect(
+            lambda: self._mark_dirty(self.invoices_view))
         self.poller.start()
 
         # ---- mapping-change cascade ----
