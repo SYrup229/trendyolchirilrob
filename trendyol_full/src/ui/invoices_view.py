@@ -429,7 +429,8 @@ class InvoicesView(QWidget):
         # Returned, invoiced with the storno handled in Oblio). Pre-shipment
         # statuses (Created/Picking/Invoiced) and Cancelled never appear here —
         # unless Settings → "Facturează comenzile cu orice status" is on, which
-        # shows every status except Cancelled and UnPacked (same rule that drafts them).
+        # shows every status except Cancelled, UnPacked and Awaiting (same rule
+        # that drafts them).
         all_statuses = self.repo.invoice_all_statuses()
 
         def is_invoiceable(r: dict) -> bool:

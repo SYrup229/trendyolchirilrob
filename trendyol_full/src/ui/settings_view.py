@@ -87,12 +87,13 @@ class SettingsView(QWidget):
         )
 
         self.invoice_all_statuses = QCheckBox(
-            "Facturează comenzile cu orice status (în afară de Cancelled și UnPacked)")
+            "Facturează comenzile cu orice status (în afară de Cancelled, UnPacked și Awaiting)")
         self.invoice_all_statuses.setChecked(repo.invoice_all_statuses())
         self.invoice_all_statuses.setToolTip(
             "Bifat: se creează facturi și apar în tabul Facturi comenzile cu orice status "
-            "(Created, Picking etc.), nu doar cele expediate. Excluse: Cancelled și UnPacked "
-            "(pachetul original al unei comenzi împărțite de Trendyol — părțile lui se facturează separat)."
+            "(Created, Picking etc.), nu doar cele expediate. Excluse: Cancelled, Awaiting "
+            "(plata nu e încă confirmată) și UnPacked (pachetul original al unei comenzi "
+            "împărțite de Trendyol — părțile lui se facturează separat)."
         )
 
         save_btn = QPushButton(t("Save settings"))
