@@ -344,7 +344,8 @@ def auto_create_local_invoices(repo: Repo) -> tuple[int, int]:
     Earlier statuses (Created, Picking, ...) are skipped — the order may still be
     cancelled before shipping, and we don't want to issue invoices we'd have to
     credit-note immediately. Settings → "Facturează comenzile cu orice status"
-    lifts that: every status except Cancelled is invoiced (is_invoiceable_status).
+    lifts that: every status except Cancelled and UnPacked (a split order's dead
+    original package) is invoiced (is_invoiceable_status).
     Returns (created, still_pending).
     """
     log = get_app_logger()

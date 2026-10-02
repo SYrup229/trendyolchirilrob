@@ -48,15 +48,26 @@ INVOICEABLE_TRENDYOL_STATUSES: frozenset[str] = frozenset({
 })
 
 
+# Never invoiced, even with "invoice any status" on. UnPacked is the dead
+# ORIGINAL package of an order Trendyol split: it still lists every line, while
+# the new packages carry the real parts — invoicing it would bill the whole
+# order a second time on top of its parts.
+NEVER_INVOICED_STATUSES: frozenset[str] = frozenset({
+    TrendyolStatus.CANCELLED.value,
+    TrendyolStatus.UNPACKED.value,
+})
+
+
 def is_invoiceable_status(status: str, all_statuses: bool = False) -> bool:
     """
     Whether an order in `status` gets a draft invoice and shows in the Invoices
     tab. Default: only INVOICEABLE_TRENDYOL_STATUSES. With Settings → "Facturează
     comenzile cu orice status" on (`all_statuses`), every status qualifies except
-    Cancelled — including pre-shipment ones and any status we don't know yet.
+    NEVER_INVOICED_STATUSES (Cancelled, UnPacked) — including pre-shipment ones
+    and any status we don't know yet.
     """
     if all_statuses:
-        return status != TrendyolStatus.CANCELLED.value
+        return status not in NEVER_INVOICED_STATUSES
     return status in INVOICEABLE_TRENDYOL_STATUSES
 
 
