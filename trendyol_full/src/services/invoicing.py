@@ -6,7 +6,9 @@ from datetime import datetime
 from typing import Any
 
 from src.api.oblio import OblioClient
-from src.domain.order_status import INVOICEABLE_TRENDYOL_STATUSES, InvoiceState
+from src.domain.order_status import (
+    INVOICEABLE_TRENDYOL_STATUSES, InvoiceState, is_invoiceable_status,
+)
 from src.logging_setup import get_app_logger
 from src.services.sync import build_oblio_client
 from src.storage.repo import Repo
@@ -341,15 +343,17 @@ def auto_create_local_invoices(repo: Repo) -> tuple[int, int]:
 
     Earlier statuses (Created, Picking, ...) are skipped — the order may still be
     cancelled before shipping, and we don't want to issue invoices we'd have to
-    credit-note immediately.
+    credit-note immediately. Settings → "Facturează comenzile cu orice status"
+    lifts that: every status except Cancelled is invoiced (is_invoiceable_status).
     Returns (created, still_pending).
     """
     log = get_app_logger()
     created = 0
     still_pending = 0
+    all_statuses = repo.invoice_all_statuses()
     for o in repo.list_orders(state=InvoiceState.PENDING.value):
         status = (o.get("status") or "").strip()
-        if status not in INVOICEABLE_TRENDYOL_STATUSES:
+        if not is_invoiceable_status(status, all_statuses):
             still_pending += 1
             continue
         # Skip orders that already have a Trendyol-side invoice link (someone else

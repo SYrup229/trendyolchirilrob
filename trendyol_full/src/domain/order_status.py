@@ -13,8 +13,6 @@ from enum import StrEnum
 
 
 class TrendyolStatus(StrEnum):
-    AWAITING = "Awaiting"       # payment not yet confirmed — don't act until Created
-    VERIFIED = "Verified"       # documented by Trendyol the same as Awaiting
     CREATED = "Created"
     PICKING = "Picking"
     INVOICED = "Invoiced"       # Trendyol's own field, not our state
@@ -50,29 +48,16 @@ INVOICEABLE_TRENDYOL_STATUSES: frozenset[str] = frozenset({
 })
 
 
-# Statuses offered in Settings → "Statusuri afișate în Facturi": every status
-# Trendyol International documents, in lifecycle order. Which ones the Invoices
-# tab shows is a per-install setting that defaults to INVOICEABLE_TRENDYOL_STATUSES
-# (the tab's original behaviour); it never changes which orders get an invoice.
-INVOICES_VIEW_STATUS_CHOICES: tuple[str, ...] = (
-    TrendyolStatus.AWAITING.value,
-    TrendyolStatus.VERIFIED.value,
-    TrendyolStatus.CREATED.value,
-    TrendyolStatus.PICKING.value,
-    TrendyolStatus.INVOICED.value,
-    TrendyolStatus.SHIPPED.value,
-    TrendyolStatus.ATCOLLECTIONPOINT.value,
-    TrendyolStatus.DELIVERED.value,
-    TrendyolStatus.UNDELIVERED.value,
-    TrendyolStatus.RETURNED.value,
-    TrendyolStatus.CANCELLED.value,
-    TrendyolStatus.UNSUPPLIED.value,
-    TrendyolStatus.UNPACKED.value,
-)
-
-# Setting token for "any status NOT in the list above" (a status Trendyol adds
-# later, or our own "Unknown" fallback). Can't collide with a real status name.
-OTHER_STATUSES = "__other__"
+def is_invoiceable_status(status: str, all_statuses: bool = False) -> bool:
+    """
+    Whether an order in `status` gets a draft invoice and shows in the Invoices
+    tab. Default: only INVOICEABLE_TRENDYOL_STATUSES. With Settings → "Facturează
+    comenzile cu orice status" on (`all_statuses`), every status qualifies except
+    Cancelled — including pre-shipment ones and any status we don't know yet.
+    """
+    if all_statuses:
+        return status != TrendyolStatus.CANCELLED.value
+    return status in INVOICEABLE_TRENDYOL_STATUSES
 
 
 class InvoiceState(StrEnum):

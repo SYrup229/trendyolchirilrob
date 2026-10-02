@@ -94,9 +94,10 @@ class MainWindow(QMainWindow):
         self.settings_view.data_synced.connect(self._on_data_synced)
         # Reset-all-mappings from Settings → kill local invoices + refresh.
         self.settings_view.mappings_reset.connect(self._on_mappings_reset)
-        # Invoices-tab status selection saved → re-filter the tab on next view.
-        self.settings_view.invoice_statuses_changed.connect(
-            lambda: self._mark_dirty(self.invoices_view))
+        # "Invoice any status" toggled → re-filter the Invoices tab and poll now, so
+        # newly eligible orders get drafted without waiting for the next tick.
+        self.settings_view.invoice_all_statuses_changed.connect(
+            self._on_invoice_all_statuses_changed)
         self.poller.start()
 
         # ---- mapping-change cascade ----
@@ -222,6 +223,10 @@ class MainWindow(QMainWindow):
             6000,
         )
         self._mark_dirty(self.mapping_view, self.bundles_view, self.products_view, self.invoices_view)
+
+    def _on_invoice_all_statuses_changed(self) -> None:
+        self._mark_dirty(self.invoices_view)
+        self.poller.poll_now()
 
     def _on_invoices_created(self, count: int) -> None:
         if count:

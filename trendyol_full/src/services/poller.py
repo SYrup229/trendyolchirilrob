@@ -36,6 +36,11 @@ class OrderPoller(QObject):
         self.stop()
         self.start()
 
+    def poll_now(self) -> None:
+        """Run one tick right away without touching the schedule. A no-op while a
+        tick is already running (that tick does the same work)."""
+        self._tick()
+
     def _tick(self) -> None:
         if self._worker is not None:
             return

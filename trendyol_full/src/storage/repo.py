@@ -9,7 +9,7 @@ from src.config import (
     DEFAULT_POLL_SECONDS,
     DEFAULT_VAT_PERCENT,
 )
-from src.domain.order_status import INVOICEABLE_TRENDYOL_STATUSES, InvoiceState
+from src.domain.order_status import InvoiceState
 from src.storage.db import get_conn, tx
 from src.storage import credentials
 
@@ -84,16 +84,9 @@ class Repo:
     def oblio_dry_run(self) -> bool:
         return self.get_setting("oblio_dry_run", "0") == "1"
 
-    def invoices_visible_statuses(self) -> frozenset[str]:
-        """Order statuses whose invoices the Invoices tab lists (Settings). Never
-        saved → the invoiceable statuses, i.e. the tab's original behaviour."""
-        raw = self.get_setting("invoices_visible_statuses")
-        if raw is None:
-            return INVOICEABLE_TRENDYOL_STATUSES
-        return frozenset(s for s in raw.split(",") if s)
-
-    def set_invoices_visible_statuses(self, statuses: Iterable[str]) -> None:
-        self.set_setting("invoices_visible_statuses", ",".join(sorted(statuses)))
+    def invoice_all_statuses(self) -> bool:
+        """Settings → "Facturează comenzile cu orice status" (off by default)."""
+        return self.get_setting("invoice_all_statuses", "0") == "1"
 
     # ---------- secrets ----------
     def set_trendyol_api_key(self, value: str) -> None: credentials.set_secret("trendyol_api_key", value)
